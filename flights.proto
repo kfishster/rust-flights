@@ -4,12 +4,21 @@ message Airport {
   string airport = 2;
 }
 
+message SelectedFlightData {
+  string from_airport = 1;
+  string departure_date = 2;
+  string to_airport = 3;
+  string airline_code = 5;
+  string flight_number = 6;
+}
+
 message FlightData {
   string date = 2;
   Airport from_flight = 13;
   Airport to_flight = 14;
   optional int32 max_stops = 5;
   repeated string airlines = 6;
+  optional SelectedFlightData selectedFlight = 4;
   optional int32 departure_earliest_hour = 8;
   optional int32 departure_latest_hour = 9;
   optional int32 arrival_earliest_hour = 10;

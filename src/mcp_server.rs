@@ -9,7 +9,7 @@ use rmcp::{
 use rust_flights::{
     get_flights as get_flights_internal, get_flights_by_city as get_flights_by_city_internal,
     CityFlightData, CityFlightSearchRequest, FlightData, FlightResult, FlightSearchRequest,
-    Passengers, SeatClass, TimeWindow, TripType,
+    Passengers, SeatClass, TimeWindow, TripType, SelectedFlight, build_itinerary_info, encode_to_base64,
 };
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
@@ -78,6 +78,40 @@ pub struct CitySearch {
     pub to_city: String,
 }
 
+/// Selected flight information for itinerary links
+#[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
+pub struct SelectedFlightInfo {
+    #[schemars(description = "Origin airport code (e.g., LAX, JFK)")]
+    pub from_airport: String,
+    #[schemars(description = "Destination airport code (e.g., JFK, LHR)")]
+    pub to_airport: String,
+    #[schemars(description = "Departure date in YYYY-MM-DD format")]
+    pub departure_date: String,
+    #[schemars(description = "Airline code (e.g., AA, DL, UA)")]
+    pub airline_code: String,
+    #[schemars(description = "Flight number (e.g., 1234)")]
+    pub flight_number: String,
+}
+
+/// Itinerary link request parameters
+#[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
+pub struct ItineraryRequest {
+    #[schemars(description = "List of selected flights for the itinerary")]
+    pub flights: Vec<SelectedFlightInfo>,
+    #[schemars(description = "Number of adult passengers")]
+    pub adults: Option<i32>,
+    #[schemars(description = "Number of child passengers")]
+    pub children: Option<i32>,
+    #[schemars(description = "Number of infants in seat")]
+    pub infants_in_seat: Option<i32>,
+    #[schemars(description = "Number of infants on lap")]
+    pub infants_on_lap: Option<i32>,
+    #[schemars(description = "Seat class: economy, premium-economy, business, first")]
+    pub seat_class: Option<String>,
+    #[schemars(description = "Trip type: one-way or round-trip")]
+    pub trip_type: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct FlightInfo {
     pub airline_name: String,
@@ -133,6 +167,68 @@ impl FlightServer {
             Ok(flight_result) => format_flight_results_json(flight_result, max_flights),
             Err(e) => format!(r#"{{"error": "Flight search failed: {}"}}"#, e),
         }
+    }
+
+    /// Generate a Google Flights itinerary link for selected flights
+    #[tool(description = "Generate a Google Flights itinerary link for specific selected flights. Provide flight details including departure date, airline code, and flight number for each flight.")]
+    async fn get_itinerary_link(
+        &self,
+        #[tool(aggr)] params: ItineraryRequest,
+    ) -> String {
+        if params.flights.is_empty() {
+            return r#"{"error": "At least one flight must be specified"}"#.to_string();
+        }
+
+        // Convert to internal SelectedFlight format
+        let selected_flights: Vec<SelectedFlight> = params.flights.into_iter().map(|f| {
+            SelectedFlight {
+                from_airport: f.from_airport,
+                to_airport: f.to_airport,
+                departure_date: f.departure_date,
+                airline_code: f.airline_code,
+                flight_number: f.flight_number,
+            }
+        }).collect();
+
+        // Build passenger configuration
+        let passengers = Passengers {
+            adults: params.adults.unwrap_or(1),
+            children: params.children.unwrap_or(0),
+            infants_in_seat: params.infants_in_seat.unwrap_or(0),
+            infants_on_lap: params.infants_on_lap.unwrap_or(0),
+        };
+
+        // Parse trip type
+        let trip_type = match params.trip_type.as_deref().unwrap_or("one-way").parse::<TripType>() {
+            Ok(tt) => tt,
+            Err(e) => return format!(r#"{{"error": "Invalid trip type: {}"}}"#, e),
+        };
+
+        // Parse seat class
+        let seat_class = match params.seat_class.as_deref().unwrap_or("economy").parse::<SeatClass>() {
+            Ok(sc) => sc,
+            Err(e) => return format!(r#"{{"error": "Invalid seat class: {}"}}"#, e),
+        };
+
+        // Build protobuf info
+        let info = match build_itinerary_info(selected_flights, trip_type, passengers, seat_class) {
+            Ok(info) => info,
+            Err(e) => return format!(r#"{{"error": "Error building itinerary: {}"}}"#, e),
+        };
+
+        // Encode to base64
+        let encoded = match encode_to_base64(&info) {
+            Ok(encoded) => encoded,
+            Err(e) => return format!(r#"{{"error": "Error encoding itinerary: {}"}}"#, e),
+        };
+
+        // Format as Google Flights URL
+        let url = format!("https://www.google.com/travel/flights?tfs={}", encoded);
+        
+        serde_json::json!({
+            "url": url,
+            "message": "Generated Google Flights itinerary link for selected flights"
+        }).to_string()
     }
 }
 
@@ -337,7 +433,7 @@ fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) 
 impl ServerHandler for FlightServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            instructions: Some("A flight search server with unified airport and city search capabilities. Returns structured JSON results with best_flights and other_flights.".into()),
+            instructions: Some("A flight search server with unified airport and city search capabilities. Returns structured JSON results with best_flights and other_flights. Also provides itinerary link generation for selected flights.".into()),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }

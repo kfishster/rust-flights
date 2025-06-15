@@ -87,6 +87,70 @@ pub fn build_flight_info(
             departure_latest_hour: flight.departure_time.as_ref().map(|t| t.latest_hour),
             arrival_earliest_hour: flight.arrival_time.as_ref().map(|t| t.earliest_hour),
             arrival_latest_hour: flight.arrival_time.as_ref().map(|t| t.latest_hour),
+            selected_flight: None,
+        };
+        
+        proto_flight_data.push(proto_flight);
+    }
+    
+    let passenger_list: Vec<Passenger> = passengers.into();
+    let passenger_ints: Vec<i32> = passenger_list.iter().map(|p| *p as i32).collect();
+    
+    Ok(Info {
+        data: proto_flight_data,
+        seat: Into::<Seat>::into(seat_class) as i32,
+        passengers: passenger_ints,
+        trip: Into::<Trip>::into(trip_type) as i32,
+    })
+}
+
+/// Selected flight information for building itinerary links
+#[derive(Debug, Clone)]
+pub struct SelectedFlight {
+    pub from_airport: String,
+    pub to_airport: String,
+    pub departure_date: String,
+    pub airline_code: String,
+    pub flight_number: String,
+}
+
+/// Build protobuf Info message with selected flights for itinerary links
+pub fn build_itinerary_info(
+    selected_flights: Vec<SelectedFlight>,
+    trip_type: TripType,
+    passengers: Passengers,
+    seat_class: SeatClass,
+) -> Result<Info, FlightError> {
+    let mut proto_flight_data = Vec::new();
+    
+    for flight in selected_flights {
+        let from_airport = Airport {
+            airport: flight.from_airport.clone(),
+        };
+        
+        let to_airport = Airport {
+            airport: flight.to_airport.clone(),
+        };
+        
+        let selected_flight_data = SelectedFlightData {
+            from_airport: flight.from_airport.clone(),
+            departure_date: flight.departure_date.clone(),
+            to_airport: flight.to_airport.clone(),
+            airline_code: flight.airline_code,
+            flight_number: flight.flight_number,
+        };
+        
+        let proto_flight = FlightData {
+            date: flight.departure_date,
+            from_flight: Some(from_airport),
+            to_flight: Some(to_airport),
+            max_stops: None,
+            airlines: vec![],
+            selected_flight: Some(selected_flight_data),
+            departure_earliest_hour: None,
+            departure_latest_hour: None,
+            arrival_earliest_hour: None,
+            arrival_latest_hour: None,
         };
         
         proto_flight_data.push(proto_flight);
@@ -257,5 +321,120 @@ mod tests {
         assert!(!encoded.is_empty());
         // Base64 should be valid
         assert!(general_purpose::STANDARD.decode(&encoded).is_ok());
+    }
+
+    #[test]
+    fn test_passenger_enum_values() {
+        // Test that our enum values match expected protobuf values
+        assert_eq!(Passenger::Adult as i32, 1);
+        assert_eq!(Passenger::Child as i32, 2);
+        assert_eq!(Passenger::InfantInSeat as i32, 3);
+        assert_eq!(Passenger::InfantOnLap as i32, 4);
+        
+        // Test building passenger vector
+        let passengers = Passengers {
+            adults: 1,
+            children: 0,
+            infants_in_seat: 0,
+            infants_on_lap: 0,
+        };
+        
+        let passenger_list: Vec<Passenger> = passengers.into();
+        let passenger_ints: Vec<i32> = passenger_list.iter().map(|p| *p as i32).collect();
+        
+        assert_eq!(passenger_ints, vec![1]); // Should be [1] for one adult
+        
+        // Test encoding a minimal Info with passengers
+        let info = Info {
+            data: vec![],
+            seat: Seat::Economy as i32,
+            passengers: passenger_ints,
+            trip: Trip::OneWay as i32,
+        };
+        
+        let encoded = encode_to_base64(&info).unwrap();
+        println!("Encoded with 1 adult: {}", encoded);
+        
+        // Decode to verify
+        let decoded_bytes = general_purpose::STANDARD.decode(&encoded).unwrap();
+        let decoded_info = Info::decode(&decoded_bytes[..]).unwrap();
+        assert_eq!(decoded_info.passengers, vec![1]);
+    }
+
+    #[test]
+    fn test_detailed_protobuf_structure() {
+        // Create Info with all fields populated for testing
+        let info = Info {
+            data: vec![], // field 3
+            seat: Seat::Economy as i32, // field 9 = 1
+            passengers: vec![1], // field 8 = [1] (one adult)
+            trip: Trip::OneWay as i32, // field 19 = 2
+        };
+        
+        println!("Info struct:");
+        println!("  data (field 3): {:?}", info.data);
+        println!("  seat (field 9): {} (Economy)", info.seat);
+        println!("  passengers (field 8): {:?} (Adult=1)", info.passengers);
+        println!("  trip (field 19): {} (OneWay)", info.trip);
+        
+        let encoded = encode_to_base64(&info).unwrap();
+        println!("Base64: {}", encoded);
+        
+        // Decode and verify each field
+        let decoded_bytes = general_purpose::STANDARD.decode(&encoded).unwrap();
+        let decoded_info = Info::decode(&decoded_bytes[..]).unwrap();
+        
+        println!("Decoded back:");
+        println!("  passengers field 8: {:?}", decoded_info.passengers);
+        println!("  seat field 9: {}", decoded_info.seat);
+        println!("  trip field 19: {}", decoded_info.trip);
+        
+        assert_eq!(decoded_info.passengers, vec![1]);
+        assert_eq!(decoded_info.seat, 1);
+        assert_eq!(decoded_info.trip, 2);
+    }
+
+    #[test]
+    fn test_build_itinerary_info_with_passengers() {
+        use crate::{TripType, SeatClass, Passengers};
+        
+        let selected_flights = vec![SelectedFlight {
+            from_airport: "LAX".to_string(),
+            to_airport: "JFK".to_string(),
+            departure_date: "2024-01-15".to_string(),
+            airline_code: "AA".to_string(),
+            flight_number: "123".to_string(),
+        }];
+        
+        let passengers = Passengers {
+            adults: 1,
+            children: 0,
+            infants_in_seat: 0,
+            infants_on_lap: 0,
+        };
+        
+        let info = build_itinerary_info(
+            selected_flights,
+            TripType::OneWay,
+            passengers,
+            SeatClass::Economy,
+        ).unwrap();
+        
+        println!("build_itinerary_info result:");
+        println!("  passengers field 8: {:?}", info.passengers);
+        println!("  seat field 9: {}", info.seat);
+        println!("  trip field 19: {}", info.trip);
+        println!("  data length: {}", info.data.len());
+        if let Some(flight) = info.data.first() {
+            println!("  first flight has selected_flight: {}", flight.selected_flight.is_some());
+        }
+        
+        let encoded = encode_to_base64(&info).unwrap();
+        println!("Itinerary Base64: {}", encoded);
+        
+        // Verify passengers field specifically
+        assert_eq!(info.passengers, vec![1]); // Should be [1] for one adult
+        assert_eq!(info.seat, 1); // Economy
+        assert_eq!(info.trip, 2); // OneWay
     }
 } 
