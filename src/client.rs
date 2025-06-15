@@ -1,9 +1,10 @@
 //! HTTP client and HTML parser for Google Flights
 
-use crate::{Flight, FlightError, FlightResult, FlightSearchRequest};
+use crate::{Flight, FlightError, FlightResult, FlightSearchRequest, FlightPrice};
 use crate::protobuf::{build_flight_info, encode_to_base64};
 use reqwest::Client;
 use scraper::{Html, Selector};
+use regex::Regex;
 
 /// Main flight client for making requests to Google Flights
 pub struct FlightClient {
@@ -50,12 +51,11 @@ pub struct FlightResponseParser {
     flight_items_selector: Selector,      // ul.Rk10dc li
     flight_name_selector: Selector,       // div.sSHqwe.tPgKwe.ogfYpf span
     departure_arrival_selector: Selector, // span.mv1WYe div
-    time_ahead_selector: Selector,        // span.bOzv6
     duration_selector: Selector,          // li div.Ak5kof div
     stops_selector: Selector,             // .BbR8Ec .ogfYpf
-    delay_selector: Selector,             // .GsCCve
     price_selector: Selector,             // .YMlIz.FpEdX
     current_price_selector: Selector,     // span.gOatQ
+    flight_info_selector: Selector,       // .NZRfve (for flight number extraction)
 }
 
 impl FlightResponseParser {
@@ -69,18 +69,16 @@ impl FlightResponseParser {
                 .map_err(|e| FlightError::ParseError(format!("Invalid flight name selector: {}", e)))?,
             departure_arrival_selector: Selector::parse("span.mv1WYe div")
                 .map_err(|e| FlightError::ParseError(format!("Invalid departure/arrival selector: {}", e)))?,
-            time_ahead_selector: Selector::parse("span.bOzv6")
-                .map_err(|e| FlightError::ParseError(format!("Invalid time ahead selector: {}", e)))?,
             duration_selector: Selector::parse("li div.Ak5kof div")
                 .map_err(|e| FlightError::ParseError(format!("Invalid duration selector: {}", e)))?,
             stops_selector: Selector::parse(".BbR8Ec .ogfYpf")
                 .map_err(|e| FlightError::ParseError(format!("Invalid stops selector: {}", e)))?,
-            delay_selector: Selector::parse(".GsCCve")
-                .map_err(|e| FlightError::ParseError(format!("Invalid delay selector: {}", e)))?,
             price_selector: Selector::parse(".YMlIz.FpEdX")
                 .map_err(|e| FlightError::ParseError(format!("Invalid price selector: {}", e)))?,
             current_price_selector: Selector::parse("span.gOatQ")
                 .map_err(|e| FlightError::ParseError(format!("Invalid current price selector: {}", e)))?,
+            flight_info_selector: Selector::parse(".NZRfve")
+                .map_err(|e| FlightError::ParseError(format!("Invalid flight info selector: {}", e)))?,
         })
     }
 
@@ -133,12 +131,6 @@ impl FlightResponseParser {
                     "Unknown".to_string()
                 });
                 
-                // Extract time ahead (non-critical)
-                let arrival_time_ahead = item.select(&self.time_ahead_selector)
-                    .next()
-                    .map(|el| el.text().collect::<String>())
-                    .unwrap_or_default();
-                
                 // Extract duration (critical)
                 let duration = item.select(&self.duration_selector)
                     .next()
@@ -168,31 +160,30 @@ impl FlightResponseParser {
                         .unwrap_or(-1) // Unknown format
                 };
                 
-                // Extract delay (non-critical)
-                let delay = item.select(&self.delay_selector)
-                    .next()
-                    .map(|el| el.text().collect::<String>())
-                    .filter(|s| !s.is_empty());
-                
-                // Extract price (critical)
-                let price = item.select(&self.price_selector)
+                // Extract price (critical) and parse currency/amount
+                let price_text = item.select(&self.price_selector)
                     .next()
                     .map(|el| el.text().collect::<String>().replace(',', ""))
                     .unwrap_or_else(|| {
                         eprintln!("⚠️  Warning: Price not found for flight: {}", name);
-                        "0".to_string()
+                        "$0".to_string()
                     });
+                
+                let price = self.parse_price(&price_text);
+                
+                // Extract flight number from NZRfve class
+                let (airline_code, flight_number) = self.extract_flight_info(&item);
                 
                 flights.push(Flight {
                     is_best: is_best_flight,
                     name,
                     departure: departure.split_whitespace().collect::<Vec<_>>().join(" "),
                     arrival: arrival.split_whitespace().collect::<Vec<_>>().join(" "),
-                    arrival_time_ahead,
                     duration,
                     stops,
-                    delay,
                     price,
+                    airline_code,
+                    flight_number,
                 });
             }
         }
@@ -216,6 +207,71 @@ impl FlightResponseParser {
                 "unknown".to_string()
             }
         }
+    }
+
+    fn parse_price(&self, price_text: &str) -> FlightPrice {
+        // Extract currency symbol and amount
+        let re = Regex::new(r"([^\d]+)(\d+)").unwrap();
+        
+        if let Some(captures) = re.captures(price_text) {
+            let currency_symbol = captures.get(1).map_or("$", |m| m.as_str());
+            let amount_str = captures.get(2).map_or("0", |m| m.as_str());
+            let amount = amount_str.parse::<i32>().unwrap_or(0);
+            
+            FlightPrice { 
+                amount, 
+                currency: currency_symbol.trim().to_string()
+            }
+        } else {
+            // Fallback parsing
+            let amount = price_text.chars()
+                .filter(|c| c.is_numeric())
+                .collect::<String>()
+                .parse::<i32>()
+                .unwrap_or(0);
+            
+            FlightPrice {
+                amount,
+                currency: "$".to_string(),
+            }
+        }
+    }
+    
+    fn extract_flight_info(&self, item: &scraper::ElementRef) -> (Option<String>, Option<String>) {
+        // Look for flight info in NZRfve class with data-travelimpactmodelwebsiteurl
+        if let Some(element) = item.select(&self.flight_info_selector).next() {
+            if let Some(url) = element.value().attr("data-travelimpactmodelwebsiteurl") {
+                return self.parse_flight_info_from_url(url);
+            }
+        }
+        
+        (None, None)
+    }
+    
+    fn parse_flight_info_from_url(&self, url: &str) -> (Option<String>, Option<String>) {
+        // Parse URLs like:
+        // https://www.travelimpactmodel.org/lookup/flight?itinerary=LAX-JFK-AA-274-20250815
+        // https://www.travelimpactmodel.org/lookup/flight?itinerary=LAX-ATL-F9-4316-20250815,ATL-JFK-F9-4818-20250815
+        
+        let re = Regex::new(r"itinerary=([^&]+)").unwrap();
+        
+        if let Some(captures) = re.captures(url) {
+            let itinerary = captures.get(1).map_or("", |m| m.as_str());
+            
+            // Split by comma for multi-leg flights and take the first one
+            let first_leg = itinerary.split(',').next().unwrap_or("");
+            
+            // Parse format: ORIGIN-DEST-AIRLINE-NUMBER-DATE
+            let parts: Vec<&str> = first_leg.split('-').collect();
+            
+            if parts.len() >= 4 {
+                let airline_code = parts[2].to_string();
+                let flight_number = parts[3].to_string();
+                return (Some(airline_code), Some(flight_number));
+            }
+        }
+        
+        (None, None)
     }
 }
 

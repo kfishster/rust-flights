@@ -47,16 +47,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (i, flight) in result.flights.iter().take(3).enumerate() {
                 println!("\n--- Flight {} ---", i + 1);
                 println!("Airline: {}", flight.name);
+                if let Some(airline_code) = &flight.airline_code {
+                    println!("Airline Code: {}", airline_code);
+                }
+                if let Some(flight_number) = &flight.flight_number {
+                    println!("Flight Number: {}", flight_number);
+                }
                 println!("Departure: {}", flight.departure);
                 println!("Arrival: {}", flight.arrival);
                 println!("Duration: {}", flight.duration);
                 println!("Stops: {}", flight.stops);
-                println!("Price: {}", flight.price);
+                println!("Price: {}{}", flight.price.currency, flight.price.amount);
                 if flight.is_best {
                     println!("⭐ Best flight option");
-                }
-                if let Some(delay) = &flight.delay {
-                    println!("⚠️  Delay: {}", delay);
                 }
             }
         }

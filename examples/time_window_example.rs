@@ -139,9 +139,8 @@ async fn search_and_display(example_name: &str, request: FlightSearchRequest) {
             println!("   Current price level: {}", result.current_price);
             println!("   Found {} flights", result.flights.len());
             
-            if !result.flights.is_empty() {
-                let best_flight = &result.flights[0];
-                println!("   Best option: {} - {}", best_flight.name, best_flight.price);
+            if let Some(best_flight) = result.flights.iter().find(|f| f.is_best) {
+                println!("   Best option: {} - {}{}", best_flight.name, best_flight.price.currency, best_flight.price.amount);
             }
         }
         Err(e) => {

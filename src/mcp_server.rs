@@ -25,7 +25,7 @@ impl FlightServer {
 }
 
 /// Unified flight search parameters with explicit mode selection
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
 pub struct FlightSearchParams {
     /// Airport-based search parameters (mutually exclusive with cities)
     #[schemars(description = "Airport search with from/to airport codes")]
@@ -58,6 +58,8 @@ pub struct FlightSearchParams {
     pub arrival_time: Option<String>,
     #[schemars(description = "Trip type: one-way or round-trip")]
     pub trip_type: Option<String>,
+    #[schemars(description = "Maximum number of flights to return (default: 30)")]
+    pub max_flights: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
@@ -76,26 +78,24 @@ pub struct CitySearch {
     pub to_city: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct FlightInfo {
+    pub airline_name: String,
+    pub departure_time: String,
+    pub arrival_time: String,
+    pub duration: String,
+    pub stops: i32,
+    pub price: rust_flights::FlightPrice,
+    pub airline_code: Option<String>,
+    pub flight_number: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct FlightSearchResult {
     pub total_flights: usize,
     pub current_price_level: String,
     pub best_flights: Vec<FlightInfo>,
     pub other_flights: Vec<FlightInfo>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FlightInfo {
-    pub is_best: bool,
-    pub airline_name: String,
-    pub departure_time: String,
-    pub arrival_time: String,
-    pub arrival_time_ahead: String,
-    pub duration: String,
-    pub stops: i32,
-    pub stops_description: String,
-    pub price: String,
-    pub delay: Option<String>,
 }
 
 #[tool(tool_box)]
@@ -106,15 +106,17 @@ impl FlightServer {
         &self,
         #[tool(aggr)] params: FlightSearchParams,
     ) -> String {
+        let max_flights = params.max_flights;
+        
         let result = match (params.airports.as_ref(), params.cities.as_ref()) {
             (Some(airports), None) => {
-                match build_flight_search_request(airports.clone(), params) {
+                match build_flight_search_request(airports.clone(), params.clone()) {
                     Ok(request) => get_flights_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building flight request: {}"}}"#, e),
                 }
             }
             (None, Some(cities)) => {
-                match build_city_flight_search_request(cities.clone(), params) {
+                match build_city_flight_search_request(cities.clone(), params.clone()) {
                     Ok(request) => get_flights_by_city_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building city flight request: {}"}}"#, e),
                 }
@@ -128,7 +130,7 @@ impl FlightServer {
         };
 
         match result {
-            Ok(flight_result) => format_flight_results_json(flight_result),
+            Ok(flight_result) => format_flight_results_json(flight_result, max_flights),
             Err(e) => format!(r#"{{"error": "Flight search failed: {}"}}"#, e),
         }
     }
@@ -281,7 +283,7 @@ fn build_city_flight_search_request(
     })
 }
 
-fn format_flight_results_json(result: FlightResult) -> String {
+fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) -> String {
     if result.flights.is_empty() {
         return serde_json::json!({
             "total_flights": 0,
@@ -294,26 +296,21 @@ fn format_flight_results_json(result: FlightResult) -> String {
 
     let mut best_flights = Vec::new();
     let mut other_flights = Vec::new();
-    let total_flights = result.flights.len();
+    let limit = max_flights.unwrap_or(30);
+    
+    // Take only the requested number of flights
+    let flights_to_process = result.flights.into_iter().take(limit);
 
-    for flight in result.flights {
-        let stops_description = match flight.stops {
-            0 => "Nonstop".to_string(),
-            1 => "1 stop".to_string(),
-            n => format!("{} stops", n),
-        };
-
+    for flight in flights_to_process {
         let flight_info = FlightInfo {
-            is_best: flight.is_best,
             airline_name: flight.name,
             departure_time: flight.departure,
             arrival_time: flight.arrival,
-            arrival_time_ahead: flight.arrival_time_ahead,
             duration: flight.duration,
             stops: flight.stops,
-            stops_description,
             price: flight.price,
-            delay: flight.delay,
+            airline_code: flight.airline_code,
+            flight_number: flight.flight_number,
         };
 
         if flight.is_best {
@@ -323,6 +320,7 @@ fn format_flight_results_json(result: FlightResult) -> String {
         }
     }
 
+    let total_flights = best_flights.len() + other_flights.len();
     let search_result = FlightSearchResult {
         total_flights,
         current_price_level: result.current_price,

@@ -135,8 +135,6 @@ impl Default for Passengers {
     }
 }
 
-
-
 /// Flight search result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlightResult {
@@ -151,11 +149,18 @@ pub struct Flight {
     pub name: String,
     pub departure: String,
     pub arrival: String,
-    pub arrival_time_ahead: String,
     pub duration: String,
     pub stops: i32,
-    pub delay: Option<String>,
-    pub price: String,
+    pub price: FlightPrice,
+    pub airline_code: Option<String>,
+    pub flight_number: Option<String>,
+}
+
+/// Price information with amount and currency
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightPrice {
+    pub amount: i32,
+    pub currency: String,
 }
 
 /// Trip type enumeration

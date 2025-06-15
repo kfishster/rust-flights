@@ -1536,6 +1536,7 @@ dependencies = [
  "clap",
  "prost",
  "prost-build",
+ "regex",
  "reqwest",
  "rmcp",
  "rmcp-macros",

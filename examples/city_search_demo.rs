@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("💰 Current price level: {}", result.current_price);
             
             if let Some(best_flight) = result.flights.first() {
-                println!("🏆 Best flight: {} - {}", best_flight.name, best_flight.price);
+                println!("🏆 Best flight: {} - {}{}", best_flight.name, best_flight.price.currency, best_flight.price.amount);
             }
         }
         Err(e) => {
@@ -62,14 +62,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             for (i, flight) in result.flights.iter().take(3).enumerate() {
                 println!(
-                    "{}. {} | {} → {} | {} | {} stops | {}",
+                    "{}. {} | {} → {} | {} | {} stops | {}{}",
                     i + 1,
                     flight.name,
                     flight.departure,
                     flight.arrival,
                     flight.duration,
                     flight.stops,
-                    flight.price
+                    flight.price.currency,
+                    flight.price.amount
                 );
             }
         }
@@ -120,8 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Success! Found {} business class flights", result.flights.len());
             println!("💰 Current price level: {}", result.current_price);
             
-            if let Some(best_flight) = result.flights.first() {
-                println!("🏆 Best flight: {} - {}", best_flight.name, best_flight.price);
+            if let Some(best_flight) = result.flights.iter().find(|f| f.is_best) {
+                println!("🏆 Best flight: {} - {}{}", best_flight.name, best_flight.price.currency, best_flight.price.amount);
             }
         }
         Err(e) => {
