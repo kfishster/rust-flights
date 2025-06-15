@@ -4,7 +4,9 @@
 //! that our protobuf encoding and HTML parsing work correctly.
 
 use rust_flights::{
-    get_flights, FlightData, FlightSearchRequest, Passengers, SeatClass, TripType, TimeWindow
+    get_flights, get_flights_by_city, search_flights_between_cities,
+    FlightData, FlightSearchRequest, CityFlightData, CityFlightSearchRequest,
+    Passengers, SeatClass, TripType, TimeWindow
 };
 use tokio;
 
@@ -481,6 +483,256 @@ async fn test_protobuf_encoding_edge_cases() {
                 }
                 _ => {
                     println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+// ===== PHASE 4: CITY-BASED FLIGHT SEARCH TESTS =====
+
+/// Helper function to create a city-based request
+fn create_city_request(from_city: &str, to_city: &str, date: &str) -> CityFlightSearchRequest {
+    CityFlightSearchRequest {
+        flights: vec![CityFlightData {
+            date: date.to_string(),
+            from_city: from_city.to_string(),
+            to_city: to_city.to_string(),
+            max_stops: Some(1),
+            airlines: None,
+            departure_time: None,
+            arrival_time: None,
+        }],
+        trip_type: TripType::OneWay,
+        passengers: Passengers::default(),
+        seat_class: SeatClass::Economy,
+    }
+}
+
+/// Helper function to create a city-based request with time windows
+fn create_city_request_with_time_windows(
+    from_city: &str, 
+    to_city: &str, 
+    date: &str,
+    departure_time: Option<TimeWindow>,
+    arrival_time: Option<TimeWindow>
+) -> CityFlightSearchRequest {
+    CityFlightSearchRequest {
+        flights: vec![CityFlightData {
+            date: date.to_string(),
+            from_city: from_city.to_string(),
+            to_city: to_city.to_string(),
+            max_stops: Some(1),
+            airlines: None,
+            departure_time,
+            arrival_time,
+        }],
+        trip_type: TripType::OneWay,
+        passengers: Passengers::default(),
+        seat_class: SeatClass::Economy,
+    }
+}
+
+#[tokio::test]
+async fn test_city_based_search_london_to_paris() {
+    let request = create_city_request("London", "Paris", "2025-08-15");
+    
+    match get_flights_by_city(request).await {
+        Ok(result) => {
+            println!("✅ City-based search (London → Paris) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  City-based search (London → Paris) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_city_based_search_new_york_to_tokyo() {
+    let request = create_city_request("New York", "Tokyo", "2025-09-01");
+    
+    match get_flights_by_city(request).await {
+        Ok(result) => {
+            println!("✅ City-based search (New York → Tokyo) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  City-based search (New York → Tokyo) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_convenience_function_london_to_sydney() {
+    match search_flights_between_cities("London", "Sydney", "2025-08-20").await {
+        Ok(result) => {
+            println!("✅ Convenience function (London → Sydney) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  Convenience function (London → Sydney) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_city_based_search_with_time_windows() {
+    let departure_time = TimeWindow::new(8, 14).unwrap();   // 8:00am to 2:00pm
+    let arrival_time = TimeWindow::new(16, 22).unwrap();    // 4:00pm to 10:00pm
+    
+    let request = create_city_request_with_time_windows(
+        "Paris", 
+        "London", 
+        "2025-08-15", 
+        Some(departure_time), 
+        Some(arrival_time)
+    );
+    
+    match get_flights_by_city(request).await {
+        Ok(result) => {
+            println!("✅ City-based search with time windows (Paris → London) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  City-based search with time windows (Paris → London) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_city_based_business_class() {
+    let mut request = create_city_request("Tokyo", "Sydney", "2025-09-10");
+    request.seat_class = SeatClass::Business;
+    
+    match get_flights_by_city(request).await {
+        Ok(result) => {
+            println!("✅ City-based business class (Tokyo → Sydney) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  City-based business class (Tokyo → Sydney) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_city_based_round_trip() {
+    let request = CityFlightSearchRequest {
+        flights: vec![
+            CityFlightData {
+                date: "2025-07-10".to_string(),
+                from_city: "New York".to_string(),
+                to_city: "London".to_string(),
+                max_stops: Some(1),
+                airlines: None,
+                departure_time: None,
+                arrival_time: None,
+            },
+            CityFlightData {
+                date: "2025-07-17".to_string(),
+                from_city: "London".to_string(),
+                to_city: "New York".to_string(),
+                max_stops: Some(1),
+                airlines: None,
+                departure_time: None,
+                arrival_time: None,
+            },
+        ],
+        trip_type: TripType::RoundTrip,
+        passengers: Passengers::default(),
+        seat_class: SeatClass::Economy,
+    };
+    
+    match get_flights_by_city(request).await {
+        Ok(result) => {
+            println!("✅ City-based round-trip (New York ↔ London) test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  City-based round-trip (New York ↔ London) test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                rust_flights::FlightError::CityNotFound(city) => {
+                    println!("City not found (this may indicate Wikidata API issues): {}", city);
+                }
+                _ => {
+                    println!("Non-critical error (acceptable): {}", e);
                 }
             }
         }

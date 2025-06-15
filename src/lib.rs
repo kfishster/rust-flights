@@ -238,6 +238,143 @@ pub async fn get_flights_legacy(
     get_flights(request).await
 }
 
+/// City-based flight data structure (Phase 4)
+#[derive(Debug, Clone)]
+pub struct CityFlightData {
+    pub date: String,
+    pub from_city: String,      // City name (e.g., "London", "New York")
+    pub to_city: String,        // City name (e.g., "Paris", "Tokyo")
+    pub max_stops: Option<i32>,
+    pub airlines: Option<Vec<String>>,
+    pub departure_time: Option<TimeWindow>,
+    pub arrival_time: Option<TimeWindow>,
+}
+
+/// City-based flight search request
+#[derive(Debug, Clone)]
+pub struct CityFlightSearchRequest {
+    pub flights: Vec<CityFlightData>,
+    pub trip_type: TripType,
+    pub passengers: Passengers,
+    pub seat_class: SeatClass,
+}
+
+/// **Phase 4: NEW CITY-BASED API**
+/// Search flights using city names instead of airport codes.
+/// This function automatically resolves city names to Freebase IDs using Wikidata.
+/// 
+/// # Example
+/// ```rust
+/// use rust_flights::{get_flights_by_city, CityFlightSearchRequest, CityFlightData, TripType, SeatClass, Passengers};
+/// 
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let request = CityFlightSearchRequest {
+///     flights: vec![CityFlightData {
+///         date: "2025-08-15".to_string(),
+///         from_city: "London".to_string(),
+///         to_city: "New York".to_string(),
+///         max_stops: Some(1),
+///         airlines: None,
+///         departure_time: None,
+///         arrival_time: None,
+///     }],
+///     trip_type: TripType::OneWay,
+///     passengers: Passengers::default(),
+///     seat_class: SeatClass::Economy,
+/// };
+/// 
+/// let result = get_flights_by_city(request).await?;
+/// println!("Found {} flights", result.flights.len());
+/// # Ok(())
+/// # }
+/// ```
+pub async fn get_flights_by_city(request: CityFlightSearchRequest) -> Result<FlightResult, FlightError> {
+    let wikidata_client = WikidataClient::new()?;
+    
+    // Convert city names to Freebase IDs
+    let mut airport_flights = Vec::new();
+    
+    for city_flight in request.flights {
+        // Resolve city names to Freebase IDs
+        let from_freebase_id = wikidata_client
+            .get_freebase_id_only(&city_flight.from_city)
+            .await
+            .map_err(|_| FlightError::CityNotFound(city_flight.from_city.clone()))?;
+            
+        let to_freebase_id = wikidata_client
+            .get_freebase_id_only(&city_flight.to_city)
+            .await
+            .map_err(|_| FlightError::CityNotFound(city_flight.to_city.clone()))?;
+        
+        // Create FlightData with Freebase IDs instead of airport codes
+        let flight_data = FlightData {
+            date: city_flight.date,
+            from_airport: from_freebase_id,  // Use Freebase ID instead of airport code
+            to_airport: to_freebase_id,      // Use Freebase ID instead of airport code
+            max_stops: city_flight.max_stops,
+            airlines: city_flight.airlines,
+            departure_time: city_flight.departure_time,
+            arrival_time: city_flight.arrival_time,
+        };
+        
+        airport_flights.push(flight_data);
+    }
+    
+    // Create regular flight search request with Freebase IDs
+    let airport_request = FlightSearchRequest {
+        flights: airport_flights,
+        trip_type: request.trip_type,
+        passengers: request.passengers,
+        seat_class: request.seat_class,
+    };
+    
+    // Use existing flight search API
+    get_flights(airport_request).await
+}
+
+/// **Phase 4: CONVENIENCE FUNCTION**
+/// Simple one-way city-based flight search with minimal parameters.
+/// 
+/// # Example
+/// ```rust
+/// use rust_flights::search_flights_between_cities;
+/// 
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let result = search_flights_between_cities(
+///     "London", 
+///     "Paris", 
+///     "2025-08-15"
+/// ).await?;
+/// 
+/// println!("Found {} flights from London to Paris", result.flights.len());
+/// # Ok(())
+/// # }
+/// ```
+pub async fn search_flights_between_cities(
+    from_city: &str,
+    to_city: &str,
+    date: &str,
+) -> Result<FlightResult, FlightError> {
+    let request = CityFlightSearchRequest {
+        flights: vec![CityFlightData {
+            date: date.to_string(),
+            from_city: from_city.to_string(),
+            to_city: to_city.to_string(),
+            max_stops: Some(1),
+            airlines: None,
+            departure_time: None,
+            arrival_time: None,
+        }],
+        trip_type: TripType::OneWay,
+        passengers: Passengers::default(),
+        seat_class: SeatClass::Economy,
+    };
+    
+    get_flights_by_city(request).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
