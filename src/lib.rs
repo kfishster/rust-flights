@@ -6,6 +6,7 @@
 
 pub mod client;
 pub mod protobuf;
+pub mod wikidata;
 
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -14,6 +15,7 @@ use thiserror::Error;
 // Re-export main types for convenience
 pub use client::{FlightClient, FlightResponseParser};
 pub use protobuf::*;
+pub use wikidata::{WikidataClient, CityInfo, WikidataError};
 
 /// Error types for the flights library
 #[derive(Error, Debug)]
@@ -34,11 +36,7 @@ pub enum FlightError {
     DateParseError(String),
     
     #[error("Wikidata API error: {0}")]
-    WikidataError(String),
-    
-    #[cfg(feature = "city-search")]
-    #[error("Cache error: {0}")]
-    CacheError(#[from] sled::Error),
+    WikidataApiError(#[from] WikidataError),
     
     #[error("Invalid time format: {0}")]
     TimeParseError(String),
