@@ -1,7 +1,7 @@
 //! CLI interface for rust-flights
 
 use clap::{Parser, Subcommand};
-use rust_flights::{get_flights, FlightData, FlightSearchRequest, Passengers, SeatClass, TripType};
+use rust_flights::{get_flights, FlightData, FlightSearchRequest, Passengers, SeatClass, TripType, TimeWindow};
 use std::fs;
 
 #[derive(Parser)]
@@ -50,6 +50,12 @@ pub enum Commands {
         /// Preferred airlines (comma-separated)
         #[arg(long)]
         airlines: Option<String>,
+        /// Departure time window (HH:MM-HH:MM, e.g., "06:00-12:00")
+        #[arg(long)]
+        departure_time: Option<String>,
+        /// Arrival time window (HH:MM-HH:MM, e.g., "15:00-21:00")
+        #[arg(long)]
+        arrival_time: Option<String>,
         /// Output file for JSON results
         #[arg(short, long)]
         output: Option<String>,
@@ -76,11 +82,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             class,
             max_stops,
             airlines,
+            departure_time,
+            arrival_time,
             output,
             trip_type,
         } => {
             // Parse airlines once
             let parsed_airlines = airlines.map(|a| a.split(',').map(|s| s.trim().to_string()).collect());
+            
+            // Parse time windows
+            let departure_time_window = if let Some(time_str) = departure_time {
+                Some(TimeWindow::from_range_str(&time_str)?)
+            } else {
+                None
+            };
+            
+            let arrival_time_window = if let Some(time_str) = arrival_time {
+                Some(TimeWindow::from_range_str(&time_str)?)
+            } else {
+                None
+            };
             
             // Build flight data
             let mut flight_data = vec![FlightData {
@@ -89,6 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 to_airport: to.clone(),
                 max_stops,
                 airlines: parsed_airlines.clone(),
+                departure_time: departure_time_window.clone(),
+                arrival_time: arrival_time_window.clone(),
             }];
             
             // Determine trip type and add return flight if needed
@@ -99,6 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     to_airport: from,
                     max_stops,
                     airlines: parsed_airlines,
+                    departure_time: departure_time_window,  // Apply same time preferences to return flight
+                    arrival_time: arrival_time_window,
                 });
                 TripType::RoundTrip
             } else {
@@ -178,6 +203,27 @@ mod tests {
             assert_eq!(from, "LAX");
             assert_eq!(to, "JFK");
             assert_eq!(date, "2024-01-15");
+        }
+    }
+    
+    #[test]
+    fn test_cli_parsing_with_time_windows() {
+        // Test search command with time windows
+        let cli = Cli::try_parse_from(&[
+            "rust-flights",
+            "search",
+            "--from", "LAX",
+            "--to", "JFK",
+            "--date", "2024-01-15",
+            "--departure-time", "06:00-12:00",
+            "--arrival-time", "15:00-21:00",
+        ]);
+        
+        assert!(cli.is_ok());
+        
+        if let Ok(Cli { command: Commands::Search { departure_time, arrival_time, .. } }) = cli {
+            assert_eq!(departure_time, Some("06:00-12:00".to_string()));
+            assert_eq!(arrival_time, Some("15:00-21:00".to_string()));
         }
     }
 } 

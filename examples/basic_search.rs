@@ -29,6 +29,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             to_airport: "JFK".to_string(),
             max_stops: None,
             airlines: Some(vec!["AA".to_string(), "DL".to_string()]), // Empty list
+            departure_time: None,
+            arrival_time: None,
         }],
         trip_type: TripType::OneWay,
         passengers: Passengers::default(),

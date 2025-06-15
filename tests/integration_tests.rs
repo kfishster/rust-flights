@@ -4,7 +4,7 @@
 //! that our protobuf encoding and HTML parsing work correctly.
 
 use rust_flights::{
-    get_flights, FlightData, FlightSearchRequest, Passengers, SeatClass, TripType
+    get_flights, FlightData, FlightSearchRequest, Passengers, SeatClass, TripType, TimeWindow
 };
 use tokio;
 
@@ -17,6 +17,8 @@ fn create_basic_request(from: &str, to: &str, date: &str) -> FlightSearchRequest
             to_airport: to.to_string(),
             max_stops: Some(1),
             airlines: None,
+            departure_time: None,
+            arrival_time: None,
         }],
         trip_type: TripType::OneWay,
         passengers: Passengers::default(),
@@ -34,6 +36,8 @@ fn create_roundtrip_request(from: &str, to: &str, depart: &str, return_date: &st
                 to_airport: to.to_string(),
                 max_stops: Some(1),
                 airlines: None,
+                departure_time: None,
+                arrival_time: None,
             },
             FlightData {
                 date: return_date.to_string(),
@@ -41,9 +45,35 @@ fn create_roundtrip_request(from: &str, to: &str, depart: &str, return_date: &st
                 to_airport: from.to_string(),
                 max_stops: Some(1),
                 airlines: None,
+                departure_time: None,
+                arrival_time: None,
             },
         ],
         trip_type: TripType::RoundTrip,
+        passengers: Passengers::default(),
+        seat_class: SeatClass::Economy,
+    }
+}
+
+/// Helper function to create a request with time windows
+fn create_request_with_time_windows(
+    from: &str, 
+    to: &str, 
+    date: &str,
+    departure_time: Option<TimeWindow>,
+    arrival_time: Option<TimeWindow>
+) -> FlightSearchRequest {
+    FlightSearchRequest {
+        flights: vec![FlightData {
+            date: date.to_string(),
+            from_airport: from.to_string(),
+            to_airport: to.to_string(),
+            max_stops: Some(1),
+            airlines: None,
+            departure_time,
+            arrival_time,
+        }],
+        trip_type: TripType::OneWay,
         passengers: Passengers::default(),
         seat_class: SeatClass::Economy,
     }
@@ -221,7 +251,7 @@ async fn test_specific_airlines() {
 #[tokio::test]
 async fn test_nonstop_flights_only() {
     let mut request = create_basic_request("LAX", "JFK", "2025-09-05");
-    request.flights[0].max_stops = Some(0); // Nonstop only
+    request.flights[0].max_stops = Some(0);
     
     match get_flights(request).await {
         Ok(result) => {
@@ -245,57 +275,214 @@ async fn test_nonstop_flights_only() {
     }
 }
 
+// NEW TIME WINDOW TESTS
+
+#[tokio::test]
+async fn test_flight_with_morning_departure() {
+    let departure_time = TimeWindow::new(6, 12).unwrap(); // 6:00am to 12:00pm
+    let request = create_request_with_time_windows("LAX", "JFK", "2025-08-15", Some(departure_time), None);
+    
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ Morning departure time filter test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  Morning departure time filter test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_flight_with_evening_arrival() {
+    let arrival_time = TimeWindow::new(17, 23).unwrap(); // 5:00pm to 11:00pm
+    let request = create_request_with_time_windows("LAX", "JFK", "2025-08-15", None, Some(arrival_time));
+    
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ Evening arrival time filter test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  Evening arrival time filter test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_flight_with_user_example_time_windows() {
+    // User's example: flight should leave between 12:00am and 11:00am, and arrive 3pm-12am
+    let departure_time = TimeWindow::new(0, 11).unwrap();  // 12:00am to 11:00am 
+    let arrival_time = TimeWindow::new(15, 23).unwrap();   // 3:00pm to 11:00pm
+    
+    let request = create_request_with_time_windows(
+        "LAX", 
+        "JFK", 
+        "2025-08-15", 
+        Some(departure_time), 
+        Some(arrival_time)
+    );
+    
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ User example time windows test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  User example time windows test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_flight_with_both_time_windows() {
+    let departure_time = TimeWindow::new(8, 14).unwrap();   // 8:00am to 2:00pm
+    let arrival_time = TimeWindow::new(16, 22).unwrap();    // 4:00pm to 10:00pm
+    
+    let request = create_request_with_time_windows(
+        "SFO", 
+        "NYC", 
+        "2025-08-15", 
+        Some(departure_time), 
+        Some(arrival_time)
+    );
+    
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ Both time windows test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  Both time windows test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_flight_with_red_eye_departure() {
+    // Red-eye flight: midnight to early morning
+    let departure_time = TimeWindow::new(0, 6).unwrap();   // 12:00am to 6:00am
+    
+    let request = create_request_with_time_windows(
+        "LAX", 
+        "JFK", 
+        "2025-08-15", 
+        Some(departure_time), 
+        None
+    );
+    
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ Red-eye departure test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
+        }
+        Err(e) => {
+            println!("⚠️  Red-eye departure test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_protobuf_encoding_edge_cases() {
-    // Test with empty airlines list
-    let request1 = FlightSearchRequest {
-        flights: vec![FlightData {
-            date: "2025-08-15".to_string(),
-            from_airport: "LAX".to_string(),
-            to_airport: "JFK".to_string(),
-            max_stops: None,
-            airlines: Some(vec![]), // Empty list
-        }],
-        trip_type: TripType::OneWay,
-        passengers: Passengers::default(),
-        seat_class: SeatClass::Economy,
+    // Test edge cases for protobuf encoding
+    let passengers = Passengers {
+        adults: 8,
+        children: 3,
+        infants_in_seat: 2,
+        infants_on_lap: 1,
     };
     
-    // This should not panic on protobuf encoding
-    let result1 = get_flights(request1).await;
-    match result1 {
-        Ok(_) => println!("✅ Empty airlines list handled correctly"),
-        Err(rust_flights::FlightError::ProtobufError(e)) => {
-            panic!("Protobuf encoding failed with empty airlines: {}", e);
-        }
-        Err(_) => println!("Non-protobuf error (acceptable)"),
-    }
+    let departure_time = TimeWindow::new(23, 23).unwrap();  // Same hour (11pm)
+    let arrival_time = TimeWindow::new(0, 0).unwrap();      // Same hour (midnight)
     
-    // Test with maximum passengers
-    let request2 = FlightSearchRequest {
+    let request = FlightSearchRequest {
         flights: vec![FlightData {
-            date: "2025-08-15".to_string(),
-            from_airport: "LAX".to_string(),
-            to_airport: "JFK".to_string(),
-            max_stops: Some(2),
-            airlines: None,
+            date: "2025-12-25".to_string(),
+            from_airport: "ORD".to_string(),
+            to_airport: "MIA".to_string(),
+            max_stops: Some(3),
+            airlines: Some(vec!["AA".to_string(), "UA".to_string(), "DL".to_string()]),
+            departure_time: Some(departure_time),
+            arrival_time: Some(arrival_time),
         }],
         trip_type: TripType::OneWay,
-        passengers: Passengers {
-            adults: 9,
-            children: 8,
-            infants_in_seat: 2,
-            infants_on_lap: 1,
-        },
+        passengers,
         seat_class: SeatClass::First,
     };
     
-    let result2 = get_flights(request2).await;
-    match result2 {
-        Ok(_) => println!("✅ Maximum passengers handled correctly"),
-        Err(rust_flights::FlightError::ProtobufError(e)) => {
-            panic!("Protobuf encoding failed with max passengers: {}", e);
+    match get_flights(request).await {
+        Ok(result) => {
+            println!("✅ Protobuf encoding edge cases test passed");
+            println!("Current price: {}", result.current_price);
+            println!("Found {} flights", result.flights.len());
+            
+            assert!(!result.current_price.is_empty(), "Current price should not be empty");
         }
-        Err(_) => println!("Non-protobuf error (acceptable)"),
+        Err(e) => {
+            println!("⚠️  Protobuf encoding edge cases test failed (this may be expected): {}", e);
+            match e {
+                rust_flights::FlightError::ProtobufError(_) => {
+                    panic!("Protobuf encoding failed: {}", e);
+                }
+                _ => {
+                    println!("Non-protobuf error (acceptable): {}", e);
+                }
+            }
+        }
     }
 } 

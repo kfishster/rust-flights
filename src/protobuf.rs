@@ -83,6 +83,10 @@ pub fn build_flight_info(
             to_flight: Some(to_airport),
             max_stops: flight.max_stops,
             airlines: flight.airlines.unwrap_or_default(),
+            departure_earliest_hour: flight.departure_time.as_ref().map(|t| t.earliest_hour),
+            departure_latest_hour: flight.departure_time.as_ref().map(|t| t.latest_hour),
+            arrival_earliest_hour: flight.arrival_time.as_ref().map(|t| t.earliest_hour),
+            arrival_latest_hour: flight.arrival_time.as_ref().map(|t| t.latest_hour),
         };
         
         proto_flight_data.push(proto_flight);
@@ -151,6 +155,8 @@ mod tests {
             to_airport: "JFK".to_string(),
             max_stops: Some(1),
             airlines: Some(vec!["AA".to_string()]),
+            departure_time: None,
+            arrival_time: None,
         }];
         
         let passengers = Passengers::default();
@@ -167,6 +173,75 @@ mod tests {
         assert_eq!(info.data[0].to_flight.as_ref().unwrap().airport, "JFK");
         assert_eq!(info.data[0].max_stops, Some(1));
         assert_eq!(info.data[0].airlines, vec!["AA"]);
+        assert_eq!(info.data[0].departure_earliest_hour, None);
+        assert_eq!(info.data[0].departure_latest_hour, None);
+        assert_eq!(info.data[0].arrival_earliest_hour, None);
+        assert_eq!(info.data[0].arrival_latest_hour, None);
+    }
+    
+    #[test]
+    fn test_build_flight_info_with_time_windows() {
+        use crate::TimeWindow;
+        
+        let departure_time = TimeWindow::new(8, 12).unwrap();
+        let arrival_time = TimeWindow::new(15, 20).unwrap();
+        
+        let flight_data = vec![ApiFlightData {
+            date: "2024-01-15".to_string(),
+            from_airport: "LAX".to_string(),
+            to_airport: "JFK".to_string(),
+            max_stops: Some(1),
+            airlines: Some(vec!["AA".to_string()]),
+            departure_time: Some(departure_time),
+            arrival_time: Some(arrival_time),
+        }];
+        
+        let passengers = Passengers::default();
+        let info = build_flight_info(
+            flight_data,
+            TripType::OneWay,
+            passengers,
+            SeatClass::Economy,
+        ).unwrap();
+        
+        assert_eq!(info.data.len(), 1);
+        assert_eq!(info.data[0].departure_earliest_hour, Some(8));
+        assert_eq!(info.data[0].departure_latest_hour, Some(12));
+        assert_eq!(info.data[0].arrival_earliest_hour, Some(15));
+        assert_eq!(info.data[0].arrival_latest_hour, Some(20));
+    }
+    
+    #[test]
+    fn test_time_window_encoding_example() {
+        use crate::TimeWindow;
+        
+        // Example from user: flight should leave between 12:00am and 11:00am, and arrive 3pm-12am
+        let departure_time = TimeWindow::new(0, 11).unwrap(); // 12:00am to 11:00am 
+        let arrival_time = TimeWindow::new(15, 23).unwrap();  // 3:00pm to 11:00pm (23 = 11pm)
+        
+        let flight_data = vec![ApiFlightData {
+            date: "2024-01-15".to_string(),
+            from_airport: "LAX".to_string(),
+            to_airport: "JFK".to_string(),
+            max_stops: None,
+            airlines: None,
+            departure_time: Some(departure_time),
+            arrival_time: Some(arrival_time),
+        }];
+        
+        let passengers = Passengers::default();
+        let info = build_flight_info(
+            flight_data,
+            TripType::OneWay,
+            passengers,
+            SeatClass::Economy,
+        ).unwrap();
+        
+        // Verify the exact values mentioned in the user's example
+        assert_eq!(info.data[0].departure_earliest_hour, Some(0));   // Field 8: 0 (12:00am)
+        assert_eq!(info.data[0].departure_latest_hour, Some(11));    // Field 9: 11 (11:00am) 
+        assert_eq!(info.data[0].arrival_earliest_hour, Some(15));    // Field 10: 15 (3:00pm)
+        assert_eq!(info.data[0].arrival_latest_hour, Some(23));      // Field 11: 23 (11:00pm)
     }
 
     #[test]

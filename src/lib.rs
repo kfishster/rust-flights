@@ -39,6 +39,61 @@ pub enum FlightError {
     #[cfg(feature = "city-search")]
     #[error("Cache error: {0}")]
     CacheError(#[from] sled::Error),
+    
+    #[error("Invalid time format: {0}")]
+    TimeParseError(String),
+}
+
+/// Time window for departure or arrival filtering
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeWindow {
+    pub earliest_hour: i32,  // 0-23 (24-hour format)
+    pub latest_hour: i32,    // 0-23 (24-hour format)
+}
+
+impl TimeWindow {
+    /// Create a new TimeWindow
+    pub fn new(earliest_hour: i32, latest_hour: i32) -> Result<Self, FlightError> {
+        if earliest_hour < 0 || earliest_hour > 23 {
+            return Err(FlightError::TimeParseError(
+                format!("earliest_hour must be 0-23, got {}", earliest_hour)
+            ));
+        }
+        if latest_hour < 0 || latest_hour > 23 {
+            return Err(FlightError::TimeParseError(
+                format!("latest_hour must be 0-23, got {}", latest_hour)
+            ));
+        }
+        
+        Ok(Self {
+            earliest_hour,
+            latest_hour,
+        })
+    }
+    
+    /// Parse from HH:MM-HH:MM format (e.g., "06:00-11:00")
+    pub fn from_range_str(range: &str) -> Result<Self, FlightError> {
+        let parts: Vec<&str> = range.split('-').collect();
+        if parts.len() != 2 {
+            return Err(FlightError::TimeParseError(
+                format!("Time range must be in format HH:MM-HH:MM, got {}", range)
+            ));
+        }
+        
+        let earliest_hour = Self::parse_hour(parts[0])?;
+        let latest_hour = Self::parse_hour(parts[1])?;
+        
+        Self::new(earliest_hour, latest_hour)
+    }
+    
+    fn parse_hour(time_str: &str) -> Result<i32, FlightError> {
+        let hour_str = time_str.split(':').next().unwrap_or("");
+        hour_str.parse::<i32>().map_err(|_| {
+            FlightError::TimeParseError(
+                format!("Invalid hour format: {}", time_str)
+            )
+        })
+    }
 }
 
 /// Core flight data structure matching Python implementation
@@ -49,6 +104,8 @@ pub struct FlightData {
     pub to_airport: String,        // Airport code
     pub max_stops: Option<i32>,
     pub airlines: Option<Vec<String>>,
+    pub departure_time: Option<TimeWindow>,
+    pub arrival_time: Option<TimeWindow>,
 }
 
 /// Complete flight search request with all parameters
@@ -186,6 +243,32 @@ pub async fn get_flights_legacy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_time_window_creation() {
+        let window = TimeWindow::new(9, 17).unwrap();
+        assert_eq!(window.earliest_hour, 9);
+        assert_eq!(window.latest_hour, 17);
+        
+        // Test invalid hours
+        assert!(TimeWindow::new(-1, 10).is_err());
+        assert!(TimeWindow::new(10, 24).is_err());
+    }
+    
+    #[test]
+    fn test_time_window_from_range_str() {
+        let window = TimeWindow::from_range_str("09:00-17:00").unwrap();
+        assert_eq!(window.earliest_hour, 9);
+        assert_eq!(window.latest_hour, 17);
+        
+        let window = TimeWindow::from_range_str("00:00-11:00").unwrap();
+        assert_eq!(window.earliest_hour, 0);
+        assert_eq!(window.latest_hour, 11);
+        
+        // Test invalid formats
+        assert!(TimeWindow::from_range_str("09:00").is_err());
+        assert!(TimeWindow::from_range_str("invalid-time").is_err());
+    }
 
     #[test]
     fn test_trip_type_parsing() {
