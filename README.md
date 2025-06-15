@@ -209,3 +209,108 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Inspired by the Python `fast-flights` library
 - Built with the amazing Rust ecosystem
+
+## ⚡️ MCP Server
+
+This project includes a **Model Context Protocol (MCP) server** that exposes the flight search functionality as a tool for Large Language Models (LLMs) like Claude. The MCP server allows AI assistants to search for flights on behalf of users using natural language requests.
+
+### ✅ Features
+
+- **Unified Flight Search**: Single tool that handles both airport codes (e.g., LAX, JFK) and city names (e.g., Los Angeles, New York)
+- **Comprehensive Parameters**: Support for all flight search options including passengers, seat class, time windows, airlines, and trip types
+- **Smart Mode Selection**: Automatically routes to airport-based or city-based search based on input parameters
+- **Error Handling**: Graceful error messages for invalid inputs or API failures
+- **Async Support**: Built with Rust's async/await for high performance
+
+### How it Works
+
+The MCP server runs as a separate binary (`rust-flights-mcp`) and communicates with MCP clients over `stdio` transport. It exposes a single `get_flights` tool that accepts either:
+
+- **Airport Search**: Specify `airports` with `from_airport` and `to_airport` codes
+- **City Search**: Specify `cities` with `from_city` and `to_city` names (uses Wikidata integration)
+
+### Building and Running the MCP Server
+
+```bash
+# Build the MCP server binary
+cargo build --bin rust-flights-mcp
+
+# Run the server
+./target/debug/rust-flights-mcp
+```
+
+### Testing with MCP Inspector
+
+You can test the server using the official MCP Inspector:
+
+```bash
+# Install the MCP Inspector
+npx @modelcontextprotocol/inspector ./target/debug/rust-flights-mcp
+```
+
+Then navigate to `http://127.0.0.1:6274` in your browser to interact with the server.
+
+### Integration with Claude Desktop
+
+Add the following to your Claude Desktop configuration file (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "rust-flights": {
+      "command": "/absolute/path/to/rust-flights/target/debug/rust-flights-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### Example Tool Usage
+
+The `get_flights` tool accepts the following parameters:
+
+**Airport-based search:**
+```json
+{
+  "airports": {
+    "from_airport": "LAX",
+    "to_airport": "JFK"
+  },
+  "departure_date": "2024-03-15",
+  "adults": 2,
+  "seat_class": "economy",
+  "trip_type": "round-trip",
+  "return_date": "2024-03-20"
+}
+```
+
+**City-based search:**
+```json
+{
+  "cities": {
+    "from_city": "Los Angeles",
+    "to_city": "New York"
+  },
+  "departure_date": "2024-03-15",
+  "adults": 1,
+  "seat_class": "business"
+}
+```
+
+**Additional Parameters:**
+- `children`, `infants_in_seat`, `infants_on_lap`: Passenger counts
+- `max_stops`: Maximum number of stops (0, 1, 2, 3)
+- `airlines`: Array of preferred airline codes (e.g., ["AA", "DL"])
+- `departure_time`, `arrival_time`: Time windows in HH:MM-HH:MM format
+- `trip_type`: "one-way" or "round-trip"
+
+### Tool Output
+
+The tool returns formatted flight results including:
+- Number of flights found and current price level
+- Best or top flights with details:
+  - Airline name and flight details
+  - Departure and arrival times
+  - Flight duration and number of stops
+  - Price information
+  - Delay information (if any)

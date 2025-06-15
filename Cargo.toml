@@ -21,6 +21,11 @@ thiserror = "1.0"
 base64 = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 
+# MCP Server
+rmcp = { version = "0.1", features = ["server", "transport-io"] }
+rmcp-macros = "0.1"
+anyhow = "1.0"
+
 # Phase 2: City search (will be added later)
 sled = { version = "0.34", optional = true }
 
@@ -39,6 +44,10 @@ city-search = ["sled"]
 name = "rust-flights"
 path = "src/main.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "rust-flights-mcp"
+path = "src/mcp_server.rs"
 
 [dev-dependencies]
 tokio-test = "0.4" 
