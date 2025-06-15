@@ -226,8 +226,8 @@ This project includes a **Model Context Protocol (MCP) server** that exposes the
 
 The MCP server runs as a separate binary (`rust-flights-mcp`) and communicates with MCP clients over `stdio` transport. It exposes a single `get_flights` tool that accepts either:
 
-- **Airport Search**: Specify `airports` with `from_airport` and `to_airport` codes
-- **City Search**: Specify `cities` with `from_city` and `to_city` names (uses Wikidata integration)
+- **Airport Search**: Specify `from_airport` and `to_airport` with airport codes
+- **City Search**: Specify `from_city` and `to_city` with city names (uses Wikidata integration)
 
 ### Building and Running the MCP Server
 
@@ -272,10 +272,8 @@ The `get_flights` tool accepts the following parameters:
 **Airport-based search:**
 ```json
 {
-  "airports": {
-    "from_airport": "LAX",
-    "to_airport": "JFK"
-  },
+  "from_airport": "LAX",
+  "to_airport": "JFK",
   "departure_date": "2024-03-15",
   "adults": 2,
   "seat_class": "economy",
@@ -287,10 +285,8 @@ The `get_flights` tool accepts the following parameters:
 **City-based search:**
 ```json
 {
-  "cities": {
-    "from_city": "Los Angeles",
-    "to_city": "New York"
-  },
+  "from_city": "Los Angeles",
+  "to_city": "New York",
   "departure_date": "2024-03-15",
   "adults": 1,
   "seat_class": "business"
@@ -300,7 +296,7 @@ The `get_flights` tool accepts the following parameters:
 **Additional Parameters:**
 - `children`, `infants_in_seat`, `infants_on_lap`: Passenger counts
 - `max_stops`: Maximum number of stops (0, 1, 2, 3)
-- `airlines`: Array of preferred airline codes (e.g., ["AA", "DL"])
+- `airlines`: Comma-separated airline codes (e.g., "AA,DL,UA")
 - `departure_time`, `arrival_time`: Time windows in HH:MM-HH:MM format
 - `trip_type`: "one-way" or "round-trip"
 

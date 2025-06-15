@@ -27,12 +27,16 @@ impl FlightServer {
 /// Unified flight search parameters with explicit mode selection
 #[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
 pub struct FlightSearchParams {
-    /// Airport-based search parameters (mutually exclusive with cities)
-    #[schemars(description = "Airport search with from/to airport codes")]
-    pub airports: Option<AirportSearch>,
-    /// City-based search parameters (mutually exclusive with airports)
-    #[schemars(description = "City search with from/to city names")]
-    pub cities: Option<CitySearch>,
+    // Airport search parameters
+    #[schemars(description = "Origin airport code (e.g., LAX, JFK) - use for airport-based search")]
+    pub from_airport: Option<String>,
+    #[schemars(description = "Destination airport code (e.g., JFK, LHR) - use for airport-based search")]
+    pub to_airport: Option<String>,
+    // City search parameters
+    #[schemars(description = "Origin city name (e.g., Los Angeles, New York) - use for city-based search")]
+    pub from_city: Option<String>,
+    #[schemars(description = "Destination city name (e.g., New York, London) - use for city-based search")]
+    pub to_city: Option<String>,
     // Common search parameters
     #[schemars(description = "Departure date in YYYY-MM-DD format")]
     pub departure_date: String,
@@ -50,8 +54,8 @@ pub struct FlightSearchParams {
     pub seat_class: Option<String>,
     #[schemars(description = "Maximum number of stops")]
     pub max_stops: Option<i32>,
-    #[schemars(description = "Preferred airlines")]
-    pub airlines: Option<Vec<String>>,
+    #[schemars(description = "Preferred airlines (comma-separated, e.g., 'AA,DL,UA')")]
+    pub airlines: Option<String>,
     #[schemars(description = "Departure time window in HH:MM-HH:MM format")]
     pub departure_time: Option<String>,
     #[schemars(description = "Arrival time window in HH:MM-HH:MM format")]
@@ -60,22 +64,6 @@ pub struct FlightSearchParams {
     pub trip_type: Option<String>,
     #[schemars(description = "Maximum number of flights to return (default: 30)")]
     pub max_flights: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
-pub struct AirportSearch {
-    #[schemars(description = "Origin airport code (e.g., LAX, JFK)")]
-    pub from_airport: String,
-    #[schemars(description = "Destination airport code (e.g., JFK, LHR)")]
-    pub to_airport: String,
-}
-
-#[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
-pub struct CitySearch {
-    #[schemars(description = "Origin city name (e.g., Los Angeles, New York)")]
-    pub from_city: String,
-    #[schemars(description = "Destination city name (e.g., New York, London)")]
-    pub to_city: String,
 }
 
 /// Selected flight information for itinerary links
@@ -135,31 +123,40 @@ pub struct FlightSearchResult {
 #[tool(tool_box)]
 impl FlightServer {
     /// Unified flight search with explicit mode selection
-    #[tool(description = "Search for flights between locations. Specify either 'airports' for airport code search or 'cities' for city name search.")]
+    #[tool(description = "Search for flights between locations. Specify either airport codes (from_airport/to_airport) or city names (from_city/to_city), but not both.")]
     async fn get_flights(
         &self,
         #[tool(aggr)] params: FlightSearchParams,
     ) -> String {
         let max_flights = params.max_flights;
         
-        let result = match (params.airports.as_ref(), params.cities.as_ref()) {
-            (Some(airports), None) => {
-                match build_flight_search_request(airports.clone(), params.clone()) {
+        let result = match (&params.from_airport, &params.to_airport, &params.from_city, &params.to_city) {
+            // Airport-based search
+            (Some(from_airport), Some(to_airport), None, None) => {
+                match build_flight_search_request(from_airport.clone(), to_airport.clone(), params.clone()) {
                     Ok(request) => get_flights_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building flight request: {}"}}"#, e),
                 }
             }
-            (None, Some(cities)) => {
-                match build_city_flight_search_request(cities.clone(), params.clone()) {
+            // City-based search
+            (None, None, Some(from_city), Some(to_city)) => {
+                match build_city_flight_search_request(from_city.clone(), to_city.clone(), params.clone()) {
                     Ok(request) => get_flights_by_city_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building city flight request: {}"}}"#, e),
                 }
             }
-            (None, None) => {
-                return r#"{"error": "Must specify either 'airports' or 'cities' for flight search"}"#.to_string()
+            // Invalid combinations
+            (Some(_), None, _, _) | (None, Some(_), _, _) => {
+                return r#"{"error": "For airport search, both from_airport and to_airport must be specified"}"#.to_string()
             }
-            (Some(_), Some(_)) => {
-                return r#"{"error": "Cannot specify both 'airports' and 'cities' - choose one search mode"}"#.to_string()
+            (_, _, Some(_), None) | (_, _, None, Some(_)) => {
+                return r#"{"error": "For city search, both from_city and to_city must be specified"}"#.to_string()
+            }
+            (Some(_), Some(_), Some(_), Some(_)) => {
+                return r#"{"error": "Cannot specify both airport codes and city names - choose one search mode"}"#.to_string()
+            }
+            (None, None, None, None) => {
+                return r#"{"error": "Must specify either airport codes (from_airport/to_airport) or city names (from_city/to_city) for flight search"}"#.to_string()
             }
         };
 
@@ -234,7 +231,8 @@ impl FlightServer {
 
 // Helper functions for parameter conversion
 fn build_flight_search_request(
-    airports: AirportSearch,
+    from_airport: String,
+    to_airport: String,
     params: FlightSearchParams,
 ) -> Result<FlightSearchRequest, String> {
     let passengers = Passengers {
@@ -272,16 +270,24 @@ fn build_flight_search_request(
         .transpose()
         .map_err(|e| format!("Invalid arrival time: {}", e))?;
 
-    let airlines = params.airlines.clone();
     let max_stops = params.max_stops;
     let return_date = params.return_date;
 
+    // Parse comma-delimited airlines string
+    let parsed_airlines = params.airlines.as_ref().map(|airlines_str| {
+        airlines_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+    });
+
     let mut flights = vec![FlightData {
         date: params.departure_date,
-        from_airport: airports.from_airport,
-        to_airport: airports.to_airport,
+        from_airport: from_airport.clone(),
+        to_airport: to_airport.clone(),
         max_stops,
-        airlines: airlines.clone(),
+        airlines: parsed_airlines.clone(),
         departure_time,
         arrival_time: arrival_time.clone(),
     }];
@@ -289,10 +295,10 @@ fn build_flight_search_request(
     if let (TripType::RoundTrip, Some(return_date)) = (&trip_type, return_date) {
         flights.push(FlightData {
             date: return_date,
-            from_airport: flights[0].to_airport.clone(),
-            to_airport: flights[0].from_airport.clone(),
+            from_airport: to_airport,
+            to_airport: from_airport,
             max_stops,
-            airlines,
+            airlines: parsed_airlines,
             departure_time: None, // Times usually not specified for return
             arrival_time,
         });
@@ -307,7 +313,8 @@ fn build_flight_search_request(
 }
 
 fn build_city_flight_search_request(
-    cities: CitySearch,
+    from_city: String,
+    to_city: String,
     params: FlightSearchParams,
 ) -> Result<CityFlightSearchRequest, String> {
     let passengers = Passengers {
@@ -345,16 +352,24 @@ fn build_city_flight_search_request(
         .transpose()
         .map_err(|e| format!("Invalid arrival time: {}", e))?;
 
-    let airlines = params.airlines.clone();
     let max_stops = params.max_stops;
     let return_date = params.return_date;
 
+    // Parse comma-delimited airlines string
+    let parsed_airlines = params.airlines.as_ref().map(|airlines_str| {
+        airlines_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<String>>()
+    });
+
     let mut flights = vec![CityFlightData {
         date: params.departure_date,
-        from_city: cities.from_city,
-        to_city: cities.to_city,
+        from_city: from_city.clone(),
+        to_city: to_city.clone(),
         max_stops,
-        airlines: airlines.clone(),
+        airlines: parsed_airlines.clone(),
         departure_time,
         arrival_time: arrival_time.clone(),
     }];
@@ -362,10 +377,10 @@ fn build_city_flight_search_request(
     if let (TripType::RoundTrip, Some(return_date)) = (&trip_type, return_date) {
         flights.push(CityFlightData {
             date: return_date,
-            from_city: flights[0].to_city.clone(),
-            to_city: flights[0].from_city.clone(),
+            from_city: to_city,
+            to_city: from_city,
             max_stops,
-            airlines,
+            airlines: parsed_airlines,
             departure_time: None, // Times usually not specified for return
             arrival_time,
         });
