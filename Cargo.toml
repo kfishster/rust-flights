@@ -1,0 +1,44 @@
+[package]
+name = "rust-flights"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A high-performance Rust library for Google Flights API reverse engineering"
+license = "MIT"
+repository = "https://github.com/yourusername/rust-flights"
+keywords = ["flights", "travel", "google", "api", "scraping"]
+categories = ["web-programming", "api-bindings"]
+
+[dependencies]
+# Phase 1: Core functionality
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+prost = "0.12"
+scraper = "0.18"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+base64 = "0.21"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Phase 2: City search (will be added later)
+sled = { version = "0.34", optional = true }
+
+# CLI (optional)
+clap = { version = "4.0", features = ["derive"], optional = true }
+
+[build-dependencies]
+prost-build = "0.12"
+
+[features]
+default = []
+cli = ["clap"]
+city-search = ["sled"]
+
+[[bin]]
+name = "rust-flights"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dev-dependencies]
+tokio-test = "0.4" 
