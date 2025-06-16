@@ -149,6 +149,8 @@ pub struct Flight {
     pub name: String,
     pub departure: String,
     pub arrival: String,
+    pub origin: String,
+    pub destination: String,
     pub duration: String,
     pub stops: i32,
     pub price: FlightPrice,
