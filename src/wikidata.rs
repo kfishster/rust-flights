@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use thiserror::Error;
 
 /// Wikidata-specific error types
@@ -54,6 +55,23 @@ struct SparqlValue {
     value: String,
 }
 
+/// Global city cache - loaded once and shared across all instances
+static CITY_CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+/// Load the city cache from the static JSON file
+fn load_city_cache() -> HashMap<String, String> {
+    let cache_data = include_str!("city_cache.json");
+    serde_json::from_str(cache_data).unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to load city cache: {}. Using empty cache.", e);
+        HashMap::new()
+    })
+}
+
+/// Get the city cache, loading it if necessary
+fn get_city_cache() -> &'static HashMap<String, String> {
+    CITY_CACHE.get_or_init(load_city_cache)
+}
+
 /// Wikidata SPARQL client
 pub struct WikidataClient {
     client: reqwest::Client,
@@ -67,6 +85,77 @@ impl WikidataClient {
         Ok(Self {
             client,
         })
+    }
+    
+    /// Populate the cache by fetching Freebase IDs for a list of cities
+    /// This is a utility function for building/updating the cache
+    pub async fn populate_cache_from_cities(&self, cities: Vec<&str>) -> Result<HashMap<String, String>, WikidataError> {
+        let mut cache = HashMap::new();
+        let mut successful = 0;
+        let mut failed = 0;
+        
+        println!("Populating cache for {} cities...", cities.len());
+        
+        for (i, city) in cities.iter().enumerate() {
+            print!("Processing {}/{}: {} ... ", i + 1, cities.len(), city);
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            
+            match self.get_freebase_id_from_wikidata(city).await {
+                Ok(freebase_id) => {
+                    cache.insert(city.to_string(), freebase_id.clone());
+                    println!("✅ {}", freebase_id);
+                    successful += 1;
+                }
+                Err(e) => {
+                    println!("❌ {}", e);
+                    failed += 1;
+                }
+            }
+            
+            // Add a small delay to be respectful to Wikidata servers
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
+        
+        println!("\nCache population complete:");
+        println!("  ✅ Successful: {}", successful);
+        println!("  ❌ Failed: {}", failed);
+        println!("  📊 Success rate: {:.1}%", (successful as f64 / cities.len() as f64) * 100.0);
+        
+        Ok(cache)
+    }
+    
+    /// Get cache statistics
+    pub fn get_cache_stats(&self) -> (usize, Vec<String>) {
+        let cache = get_city_cache();
+        let cities: Vec<String> = cache.keys().cloned().collect();
+        (cache.len(), cities)
+    }
+    
+    /// Check if a city is in the cache
+    pub fn is_city_cached(&self, city_name: &str) -> bool {
+        self.get_from_cache(city_name).is_some()
+    }
+    
+    /// Get Freebase ID directly from Wikidata (bypassing cache)
+    async fn get_freebase_id_from_wikidata(&self, city_name: &str) -> Result<String, WikidataError> {
+        // Execute the optimized search directly
+        let sparql_query = self.build_city_search_query(city_name, 5);
+        let response = self.execute_sparql_query(&sparql_query).await?;
+        let cities = self.parse_multiple_cities_response(response)?;
+        
+        // First try to find an exact match
+        if let Some(city) = cities.iter().find(|c| c.name.to_lowercase() == city_name.to_lowercase()) {
+            if let Some(ref freebase_id) = city.freebase_id {
+                return Ok(freebase_id.clone());
+            }
+        }
+        
+        // If no exact match with Freebase ID, take the first city with a Freebase ID
+        if let Some(city) = cities.iter().find(|c| c.freebase_id.is_some()) {
+            return Ok(city.freebase_id.as_ref().unwrap().clone());
+        }
+        
+        Err(WikidataError::NoFreebaseId(city_name.to_string()))
     }
     
 
@@ -99,8 +188,16 @@ impl WikidataClient {
     
 
     
-    /// Get only the Freebase ID for a city (fastest method - optimized query)
+    /// Get only the Freebase ID for a city (cached + fallback to Wikidata)
     pub async fn get_freebase_id_only(&self, city_name: &str) -> Result<String, WikidataError> {
+        // First check the cache
+        if let Some(freebase_id) = self.get_from_cache(city_name) {
+            return Ok(freebase_id);
+        }
+        
+        // If not in cache, fall back to Wikidata query
+        eprintln!("Cache miss for '{}', querying Wikidata...", city_name);
+        
         // Execute the optimized search directly
         let sparql_query = self.build_city_search_query(city_name, 5);
         let response = self.execute_sparql_query(&sparql_query).await?;
@@ -119,6 +216,52 @@ impl WikidataClient {
         }
         
         Err(WikidataError::NoFreebaseId(city_name.to_string()))
+    }
+    
+    /// Check the cache for a city's Freebase ID
+    fn get_from_cache(&self, city_name: &str) -> Option<String> {
+        let cache = get_city_cache();
+        
+        // Try exact match first
+        if let Some(freebase_id) = cache.get(city_name) {
+            return Some(freebase_id.clone());
+        }
+        
+        // Try case-insensitive match
+        let city_name_lower = city_name.to_lowercase();
+        for (cached_city, freebase_id) in cache.iter() {
+            if cached_city.to_lowercase() == city_name_lower {
+                return Some(freebase_id.clone());
+            }
+        }
+        
+        // Try partial matches for common city variations
+        for (cached_city, freebase_id) in cache.iter() {
+            if self.is_city_name_match(&city_name_lower, &cached_city.to_lowercase()) {
+                return Some(freebase_id.clone());
+            }
+        }
+        
+        None
+    }
+    
+    /// Check if two city names are likely the same city (handles common variations)
+    fn is_city_name_match(&self, query: &str, cached: &str) -> bool {
+        // Handle common variations
+        let normalize = |name: &str| -> String {
+            name.replace("saint ", "st. ")
+                .replace("st ", "st. ")
+                .replace("mount ", "mt. ")
+                .replace("fort ", "ft. ")
+                .trim()
+                .to_string()
+        };
+        
+        let normalized_query = normalize(query);
+        let normalized_cached = normalize(cached);
+        
+        // Check if one contains the other (for cases like "New York" vs "New York City")
+        normalized_query.contains(&normalized_cached) || normalized_cached.contains(&normalized_query)
     }
     
 
@@ -191,13 +334,33 @@ mod tests {
     use super::*;
     
     #[tokio::test]
-    async fn test_london_freebase_id() {
+    async fn test_cache_functionality() {
         let client = WikidataClient::new().unwrap();
+        
+        // Test cache statistics
+        let (cache_size, cached_cities) = client.get_cache_stats();
+        println!("📊 Cache size: {} cities", cache_size);
+        println!("🏙️ First 10 cached cities: {:?}", &cached_cities[..std::cmp::min(10, cached_cities.len())]);
+        
+        assert!(cache_size > 0, "Cache should not be empty");
+    }
+    
+    #[tokio::test]
+    async fn test_london_freebase_id_cached() {
+        let client = WikidataClient::new().unwrap();
+        
+        // Check if London is in cache
+        let is_cached = client.is_city_cached("London");
+        println!("🏴󠁧󠁢󠁥󠁮󠁧󠁿 London is cached: {}", is_cached);
+        
         let result = client.get_freebase_id_only("London").await;
         
         match result {
             Ok(freebase_id) => {
-                println!("✅ London Freebase ID: {}", freebase_id);
+                println!("✅ London Freebase ID: {} (from {})", 
+                    freebase_id, 
+                    if is_cached { "cache" } else { "Wikidata" }
+                );
                 assert_eq!(freebase_id, "/m/04jpl");
             }
             Err(WikidataError::HttpError(_)) => {
@@ -288,16 +451,23 @@ mod tests {
     #[tokio::test]
     async fn test_city_not_found() {
         let client = WikidataClient::new().unwrap();
-        let result = client.get_freebase_id_only("NonexistentCityXYZ123").await;
+        let city_name = "NonexistentCityXYZ123";
+        
+        // Should not be in cache 
+        let is_cached = client.is_city_cached(city_name);
+        println!("❌ {} is cached: {} (should be false)", city_name, is_cached);
+        assert!(!is_cached, "Non-existent city should not be in cache");
+        
+        let result = client.get_freebase_id_only(city_name).await;
         
         match result {
             Err(WikidataError::CityNotFound(city)) => {
                 println!("✅ Correctly detected non-existent city: {}", city);
-                assert_eq!(city, "NonexistentCityXYZ123");
+                assert_eq!(city, city_name);
             }
             Err(WikidataError::NoFreebaseId(city)) => {
                 println!("✅ City found but no Freebase ID: {}", city);
-                assert_eq!(city, "NonexistentCityXYZ123");
+                assert_eq!(city, city_name);
             }
             Err(WikidataError::HttpError(_)) => {
                 eprintln!("Skipping test due to network issue");
@@ -306,6 +476,25 @@ mod tests {
                 println!("Unexpected result: {:?}", other);
             }
         }
+    }
+    
+    #[tokio::test]
+    async fn test_cache_hit_vs_miss() {
+        let client = WikidataClient::new().unwrap();
+        
+        // Test a city that should be in cache
+        let popular_city = "Tokyo";
+        let is_popular_cached = client.is_city_cached(popular_city);
+        
+        // Test a city that likely won't be in cache
+        let obscure_city = "Timbuktu";
+        let is_obscure_cached = client.is_city_cached(obscure_city);
+        
+        println!("🏙️ {} cached: {}", popular_city, is_popular_cached);
+        println!("🏜️ {} cached: {}", obscure_city, is_obscure_cached);
+        
+        // Popular city should be cached
+        assert!(is_popular_cached, "Popular city should be in cache");
     }
     
 
