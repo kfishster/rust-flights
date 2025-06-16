@@ -96,7 +96,6 @@ pub struct FlightResponseParser {
     flight_name_selector: Selector,       // div.sSHqwe.tPgKwe.ogfYpf span
     departure_arrival_selector: Selector, // span.mv1WYe div
     duration_selector: Selector,          // li div.Ak5kof div
-    route_selector: Selector,             // li div.Ak5kof span
     stops_selector: Selector,             // .BbR8Ec .ogfYpf
     price_selector: Selector,             // .YMlIz.FpEdX
     current_price_selector: Selector,     // span.gOatQ
@@ -117,8 +116,6 @@ impl FlightResponseParser {
                 .map_err(|e| FlightError::ParseError(format!("Invalid departure/arrival selector: {}", e)))?,
             duration_selector: Selector::parse("li div.Ak5kof div")
                 .map_err(|e| FlightError::ParseError(format!("Invalid duration selector: {}", e)))?,
-            route_selector: Selector::parse("li div.Ak5kof span")
-                .map_err(|e| FlightError::ParseError(format!("Invalid route selector: {}", e)))?,
             stops_selector: Selector::parse(".BbR8Ec .ogfYpf")
                 .map_err(|e| FlightError::ParseError(format!("Invalid stops selector: {}", e)))?,
             price_selector: Selector::parse(".YMlIz.FpEdX")
@@ -196,20 +193,6 @@ impl FlightResponseParser {
                         "Unknown".to_string()
                     });
                 
-                // Extract route (critical)
-                let route = item.select(&self.route_selector)
-                    .next()
-                    .map(|el| el.text().collect::<String>())
-                    .unwrap_or_else(|| {
-                        eprintln!("⚠️  Warning: Route not found for flight: {}", name);
-                        "Unknown".to_string()
-                    });
-
-                // route is hyphenated, split into origin and destination
-                let route_parts = route.split('-').collect::<Vec<&str>>();
-                let origin = route_parts[0].to_string();
-                let destination = route_parts[1].to_string();
-
                 // Extract stops (critical)
                 let stops_text = item.select(&self.stops_selector)
                     .next()
@@ -250,8 +233,6 @@ impl FlightResponseParser {
                     departure: departure.split_whitespace().collect::<Vec<_>>().join(" "),
                     arrival: arrival.split_whitespace().collect::<Vec<_>>().join(" "),
                     duration,
-                    origin,
-                    destination,
                     stops,
                     price,
                     airline_code,
