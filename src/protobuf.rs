@@ -171,7 +171,7 @@ pub fn build_itinerary_info(
 pub fn encode_to_base64(info: &Info) -> Result<String, FlightError> {
     let mut buf = Vec::new();
     info.encode(&mut buf)?;
-    Ok(general_purpose::STANDARD.encode(&buf))
+    Ok(general_purpose::URL_SAFE.encode(&buf))
 }
 
 #[cfg(test)]
