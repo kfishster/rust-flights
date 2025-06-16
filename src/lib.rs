@@ -154,6 +154,8 @@ pub struct Flight {
     pub price: FlightPrice,
     pub airline_code: Option<String>,
     pub flight_number: Option<String>,
+    pub origin_airport: Option<String>,
+    pub destination_airport: Option<String>,
 }
 
 /// Price information with amount and currency

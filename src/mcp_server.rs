@@ -110,6 +110,8 @@ pub struct FlightInfo {
     pub price: rust_flights::FlightPrice,
     pub airline_code: Option<String>,
     pub flight_number: Option<String>,
+    pub origin_airport: Option<String>,
+    pub destination_airport: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -422,6 +424,8 @@ fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) 
             price: flight.price,
             airline_code: flight.airline_code,
             flight_number: flight.flight_number,
+            origin_airport: flight.origin_airport,
+            destination_airport: flight.destination_airport,
         };
 
         if flight.is_best {
@@ -439,7 +443,7 @@ fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) 
         other_flights,
     };
 
-    serde_json::to_string_pretty(&search_result).unwrap_or_else(|e| {
+    serde_json::to_string(&search_result).unwrap_or_else(|e| {
         format!(r#"{{"error": "Failed to serialize results: {}"}}"#, e)
     })
 }

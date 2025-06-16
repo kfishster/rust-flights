@@ -56,6 +56,7 @@ pub struct FlightResponseParser {
     price_selector: Selector,             // .YMlIz.FpEdX
     current_price_selector: Selector,     // span.gOatQ
     flight_info_selector: Selector,       // .NZRfve (for flight number extraction)
+    airport_codes_selector: Selector,     // span.PTuQse span[jscontroller="cNtv4b"] (for origin/destination airports)
 }
 
 impl FlightResponseParser {
@@ -79,6 +80,8 @@ impl FlightResponseParser {
                 .map_err(|e| FlightError::ParseError(format!("Invalid current price selector: {}", e)))?,
             flight_info_selector: Selector::parse(".NZRfve")
                 .map_err(|e| FlightError::ParseError(format!("Invalid flight info selector: {}", e)))?,
+            airport_codes_selector: Selector::parse("span.PTuQse span[jscontroller=\"cNtv4b\"]")
+                .map_err(|e| FlightError::ParseError(format!("Invalid airport codes selector: {}", e)))?,
         })
     }
 
@@ -174,6 +177,9 @@ impl FlightResponseParser {
                 // Extract flight number from NZRfve class
                 let (airline_code, flight_number) = self.extract_flight_info(&item);
                 
+                // Extract origin and destination airport codes
+                let (origin_airport, destination_airport) = self.extract_airport_codes(&item);
+                
                 flights.push(Flight {
                     is_best: is_best_flight,
                     name,
@@ -184,6 +190,8 @@ impl FlightResponseParser {
                     price,
                     airline_code,
                     flight_number,
+                    origin_airport,
+                    destination_airport,
                 });
             }
         }
@@ -273,11 +281,33 @@ impl FlightResponseParser {
         
         (None, None)
     }
+    
+    fn extract_airport_codes(&self, item: &scraper::ElementRef) -> (Option<String>, Option<String>) {
+        // Extract airport codes from span.PTuQse span[jscontroller="cNtv4b"]
+        // The HTML structure contains origin and destination airport codes
+        let airport_codes: Vec<String> = item.select(&self.airport_codes_selector)
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        // Expect exactly 2 airport codes: [origin, destination]
+        if airport_codes.len() >= 2 {
+            (Some(airport_codes[0].clone()), Some(airport_codes[1].clone()))
+        } else if airport_codes.len() == 1 {
+            // If only one code found, we can't determine origin vs destination
+            eprintln!("⚠️  Warning: Only one airport code found, expected origin and destination");
+            (Some(airport_codes[0].clone()), None)
+        } else {
+            eprintln!("⚠️  Warning: No airport codes found in flight item");
+            (None, None)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scraper::Html;
 
     #[tokio::test]
     async fn test_flight_client_creation() {
@@ -296,5 +326,92 @@ mod tests {
         let parser = FlightResponseParser::new().unwrap();
         let result = parser.parse_response("<html></html>");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_airport_codes() {
+        let parser = FlightResponseParser::new().unwrap();
+        
+        // Test HTML structure with airport codes
+        let html = r#"
+            <li>
+                <span class="PTuQse sSHqwe tPgKwe ogfYpf" aria-hidden="true">
+                    <div class="QylvBf">
+                        <span jscontroller="E0AZj">
+                            <span jsslot="">
+                                <span jscontroller="cNtv4b">LAX</span>
+                            </span>
+                        </span>
+                    </div>
+                    –
+                    <div class="QylvBf">
+                        <span jscontroller="E0AZj">
+                            <span jsslot="">
+                                <span jscontroller="cNtv4b">JFK</span>
+                            </span>
+                        </span>
+                    </div>
+                </span>
+            </li>
+        "#;
+        
+        let document = Html::parse_fragment(html);
+        let li_selector = Selector::parse("li").unwrap();
+        let item = document.select(&li_selector).next().unwrap();
+        
+        let (origin, destination) = parser.extract_airport_codes(&item);
+        
+        assert_eq!(origin, Some("LAX".to_string()));
+        assert_eq!(destination, Some("JFK".to_string()));
+    }
+
+    #[test]
+    fn test_extract_airport_codes_single_code() {
+        let parser = FlightResponseParser::new().unwrap();
+        
+        // Test HTML structure with only one airport code
+        let html = r#"
+            <li>
+                <span class="PTuQse sSHqwe tPgKwe ogfYpf" aria-hidden="true">
+                    <div class="QylvBf">
+                        <span jscontroller="E0AZj">
+                            <span jsslot="">
+                                <span jscontroller="cNtv4b">LAX</span>
+                            </span>
+                        </span>
+                    </div>
+                </span>
+            </li>
+        "#;
+        
+        let document = Html::parse_fragment(html);
+        let li_selector = Selector::parse("li").unwrap();
+        let item = document.select(&li_selector).next().unwrap();
+        
+        let (origin, destination) = parser.extract_airport_codes(&item);
+        
+        assert_eq!(origin, Some("LAX".to_string()));
+        assert_eq!(destination, None);
+    }
+
+    #[test]
+    fn test_extract_airport_codes_none() {
+        let parser = FlightResponseParser::new().unwrap();
+        
+        // Test HTML structure with no airport codes
+        let html = r#"
+            <li>
+                <div>No airport codes here</div>
+            </li>
+        "#;
+        
+        let document = Html::parse_fragment(html);
+        let li_selector = Selector::parse("li").unwrap();
+        let item = document.select(&li_selector).next().unwrap();
+        
+        let (origin, destination) = parser.extract_airport_codes(&item);
+        
+        assert_eq!(origin, None);
+        assert_eq!(destination, None);
     }
 } 
