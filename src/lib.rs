@@ -11,7 +11,6 @@ pub mod wikidata;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
-use tracing::{info, error, debug, instrument};
 
 // Re-export main types for convenience
 pub use client::{FlightClient, FlightResponseParser};
@@ -209,33 +208,9 @@ impl FromStr for SeatClass {
 }
 
 /// Main public API function with consolidated parameters
-#[instrument(level = "info", skip(request))]
 pub async fn get_flights(request: FlightSearchRequest) -> Result<FlightResult, FlightError> {
-    info!(
-        flights_count = request.flights.len(),
-        trip_type = ?request.trip_type,
-        passengers = ?request.passengers,
-        seat_class = ?request.seat_class,
-        "Starting airport-based flight search"
-    );
-    
     let client = FlightClient::new().await?;
-    let result = client.get_flights(request).await;
-    
-    match &result {
-        Ok(flight_result) => {
-            info!(
-                flights_found = flight_result.flights.len(),
-                price_level = flight_result.current_price,
-                "Airport-based flight search completed"
-            );
-        },
-        Err(e) => {
-            error!(error = %e, "Airport-based flight search failed");
-        }
-    }
-    
-    result
+    client.get_flights(request).await
 }
 
 /// Legacy API function matching Python interface (deprecated)
@@ -319,58 +294,23 @@ pub struct CityFlightSearchRequest {
 /// # Ok(())
 /// # }
 /// ```
-#[instrument(level = "info", skip(request))]
 pub async fn get_flights_by_city(request: CityFlightSearchRequest) -> Result<FlightResult, FlightError> {
-    info!(
-        flights_count = request.flights.len(),
-        trip_type = ?request.trip_type,
-        "Starting city-based flight search"
-    );
-    
     let wikidata_client = WikidataClient::new()?;
     
     // Convert city names to Freebase IDs
     let mut airport_flights = Vec::new();
     
     for city_flight in request.flights {
-        debug!(
-            from_city = city_flight.from_city,
-            to_city = city_flight.to_city,
-            "Resolving city names to Freebase IDs"
-        );
-        
         // Resolve city names to Freebase IDs
         let from_freebase_id = wikidata_client
             .get_freebase_id_only(&city_flight.from_city)
             .await
-            .map_err(|e| {
-                error!(
-                    city = city_flight.from_city,
-                    error = %e,
-                    "Failed to resolve origin city"
-                );
-                FlightError::CityNotFound(city_flight.from_city.clone())
-            })?;
+            .map_err(|_| FlightError::CityNotFound(city_flight.from_city.clone()))?;
             
         let to_freebase_id = wikidata_client
             .get_freebase_id_only(&city_flight.to_city)
             .await
-            .map_err(|e| {
-                error!(
-                    city = city_flight.to_city,
-                    error = %e,
-                    "Failed to resolve destination city"
-                );
-                FlightError::CityNotFound(city_flight.to_city.clone())
-            })?;
-        
-        debug!(
-            from_city = city_flight.from_city,
-            to_city = city_flight.to_city,
-            from_freebase_id = from_freebase_id,
-            to_freebase_id = to_freebase_id,
-            "Successfully resolved cities to Freebase IDs"
-        );
+            .map_err(|_| FlightError::CityNotFound(city_flight.to_city.clone()))?;
         
         // Create FlightData with Freebase IDs instead of airport codes
         let flight_data = FlightData {
@@ -386,8 +326,6 @@ pub async fn get_flights_by_city(request: CityFlightSearchRequest) -> Result<Fli
         airport_flights.push(flight_data);
     }
     
-    info!("City resolution complete, proceeding with airport-based search");
-    
     // Create regular flight search request with Freebase IDs
     let airport_request = FlightSearchRequest {
         flights: airport_flights,
@@ -397,22 +335,7 @@ pub async fn get_flights_by_city(request: CityFlightSearchRequest) -> Result<Fli
     };
     
     // Use existing flight search API
-    let result = get_flights(airport_request).await;
-    
-    match &result {
-        Ok(flight_result) => {
-            info!(
-                flights_found = flight_result.flights.len(),
-                price_level = flight_result.current_price,
-                "City-based flight search completed"
-            );
-        },
-        Err(e) => {
-            error!(error = %e, "City-based flight search failed");
-        }
-    }
-    
-    result
+    get_flights(airport_request).await
 }
 
 /// **Phase 4: CONVENIENCE FUNCTION**

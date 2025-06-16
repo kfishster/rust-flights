@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use thiserror::Error;
-use tracing::{info, warn, error, debug, instrument};
 
 /// Wikidata-specific error types
 #[derive(Error, Debug)]
@@ -141,58 +140,29 @@ impl WikidataClient {
     async fn get_freebase_id_from_wikidata(&self, city_name: &str) -> Result<String, WikidataError> {
         // Execute the optimized search directly
         let sparql_query = self.build_city_search_query(city_name, 5);
-        debug!(city = city_name, "Executing SPARQL query");
-        
         let response = self.execute_sparql_query(&sparql_query).await?;
         let cities = self.parse_multiple_cities_response(response)?;
-        
-        debug!(
-            city = city_name,
-            candidates_found = cities.len(),
-            "Wikidata query completed"
-        );
         
         // First try to find an exact match
         if let Some(city) = cities.iter().find(|c| c.name.to_lowercase() == city_name.to_lowercase()) {
             if let Some(ref freebase_id) = city.freebase_id {
-                info!(
-                    city = city_name,
-                    freebase_id = freebase_id,
-                    "Found exact match with Freebase ID"
-                );
                 return Ok(freebase_id.clone());
             }
         }
         
         // If no exact match with Freebase ID, take the first city with a Freebase ID
         if let Some(city) = cities.iter().find(|c| c.freebase_id.is_some()) {
-            let freebase_id = city.freebase_id.as_ref().unwrap().clone();
-            warn!(
-                city = city_name,
-                matched_city = city.name,
-                freebase_id = freebase_id,
-                "Using best available match (not exact)"
-            );
-            return Ok(freebase_id);
+            return Ok(city.freebase_id.as_ref().unwrap().clone());
         }
         
-        error!(
-            city = city_name,
-            candidates_checked = cities.len(),
-            "No Freebase ID found for city"
-        );
         Err(WikidataError::NoFreebaseId(city_name.to_string()))
     }
     
 
     
     /// Execute SPARQL query against Wikidata endpoint
-    #[instrument(level = "debug", skip(self, query))]
     async fn execute_sparql_query(&self, query: &str) -> Result<SparqlResponse, WikidataError> {
         let url = "https://query.wikidata.org/sparql";
-        
-        debug!(url = url, "Making request to Wikidata SPARQL endpoint");
-        let start_time = std::time::Instant::now();
         
         let response = self
             .client
@@ -203,29 +173,14 @@ impl WikidataClient {
             .send()
             .await?;
         
-        let status = response.status();
-        let request_duration = start_time.elapsed();
-        
-        debug!(
-            status = %status,
-            duration_ms = request_duration.as_millis(),
-            "Wikidata SPARQL request completed"
-        );
-        
-        if !status.is_success() {
-            error!(status = %status, "SPARQL query failed");
+        if !response.status().is_success() {
             return Err(WikidataError::SparqlError(format!(
                 "SPARQL query failed with status: {}",
-                status
+                response.status()
             )));
         }
         
         let sparql_response: SparqlResponse = response.json().await?;
-        debug!(
-            bindings_count = sparql_response.results.bindings.len(),
-            "Successfully parsed SPARQL response"
-        );
-        
         Ok(sparql_response)
     }
     
@@ -234,22 +189,14 @@ impl WikidataClient {
 
     
     /// Get only the Freebase ID for a city (cached + fallback to Wikidata)
-    #[instrument(level = "debug", skip(self))]
     pub async fn get_freebase_id_only(&self, city_name: &str) -> Result<String, WikidataError> {
-        debug!(city = city_name, "Looking up Freebase ID");
-        
         // First check the cache
         if let Some(freebase_id) = self.get_from_cache(city_name) {
-            debug!(
-                city = city_name,
-                freebase_id = freebase_id,
-                "Cache hit for city lookup"
-            );
             return Ok(freebase_id);
         }
         
         // If not in cache, fall back to Wikidata query
-        warn!(city = city_name, "Cache miss, querying Wikidata");
+        eprintln!("Cache miss for '{}', querying Wikidata...", city_name);
         
         // Execute the optimized search directly
         let sparql_query = self.build_city_search_query(city_name, 5);
@@ -277,12 +224,6 @@ impl WikidataClient {
         
         // Try exact match first
         if let Some(freebase_id) = cache.get(city_name) {
-            debug!(
-                city = city_name,
-                freebase_id = freebase_id,
-                match_type = "exact",
-                "Cache hit"
-            );
             return Some(freebase_id.clone());
         }
         
@@ -290,13 +231,6 @@ impl WikidataClient {
         let city_name_lower = city_name.to_lowercase();
         for (cached_city, freebase_id) in cache.iter() {
             if cached_city.to_lowercase() == city_name_lower {
-                debug!(
-                    city = city_name,
-                    cached_city = cached_city,
-                    freebase_id = freebase_id,
-                    match_type = "case_insensitive",
-                    "Cache hit"
-                );
                 return Some(freebase_id.clone());
             }
         }
@@ -304,18 +238,10 @@ impl WikidataClient {
         // Try partial matches for common city variations
         for (cached_city, freebase_id) in cache.iter() {
             if self.is_city_name_match(&city_name_lower, &cached_city.to_lowercase()) {
-                debug!(
-                    city = city_name,
-                    cached_city = cached_city,
-                    freebase_id = freebase_id,
-                    match_type = "fuzzy",
-                    "Cache hit"
-                );
                 return Some(freebase_id.clone());
             }
         }
         
-        debug!(city = city_name, "Cache miss");
         None
     }
     

@@ -13,10 +13,6 @@ use rust_flights::{
 };
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
-use tracing::{info, warn, error, debug};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use tracing_appender;
-use std::path::PathBuf;
 
 /// Flight search MCP server
 #[derive(Default, Clone)]
@@ -25,41 +21,6 @@ pub struct FlightServer;
 impl FlightServer {
     pub fn new() -> Self {
         Self
-    }
-
-    /// Initialize logging to file
-    fn init_logging() -> Result<()> {
-        // Create logs directory if it doesn't exist
-        let log_dir = PathBuf::from("logs");
-        std::fs::create_dir_all(&log_dir)?;
-        
-        // Create a file appender for rotating logs - using blocking writer for simplicity
-        let file_appender = tracing_appender::rolling::daily(&log_dir, "rust-flights-mcp.log");
-        
-        // Set up the subscriber with file output - forced debug level
-        tracing_subscriber::registry()
-            .with(
-                EnvFilter::new("debug") // Force debug level for all modules
-                    .add_directive("rust_flights=debug".parse()?)
-                    .add_directive("reqwest=trace".parse()?)  // Keep external libs at trace to see everything
-                    .add_directive("hyper=trace".parse()?)
-                    .add_directive("h2=trace".parse()?)
-            )
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(file_appender)  // Use blocking writer directly
-                    .with_ansi(false)
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_file(true)
-                    .with_line_number(true)
-                    .json() // Structured JSON logging for easier parsing
-            )
-            .init();
-        
-        info!("Logging initialized - logs will be written to logs/rust-flights-mcp.log.*");
-        debug!("Debug logging is enabled and working");
-        Ok(())
     }
 }
 
@@ -169,83 +130,39 @@ impl FlightServer {
     ) -> String {
         let max_flights = params.max_flights;
         
-        // Log the incoming request
-        info!(
-            from_airport = params.from_airport.as_deref(),
-            to_airport = params.to_airport.as_deref(),
-            from_city = params.from_city.as_deref(),
-            to_city = params.to_city.as_deref(),
-            departure_date = params.departure_date,
-            return_date = params.return_date.as_deref(),
-            adults = params.adults.unwrap_or(1),
-            children = params.children.unwrap_or(0),
-            seat_class = params.seat_class.as_deref().unwrap_or("economy"),
-            trip_type = params.trip_type.as_deref().unwrap_or("one-way"),
-            max_flights = max_flights.unwrap_or(30),
-            "Flight search request received"
-        );
-        
         let result = match (&params.from_airport, &params.to_airport, &params.from_city, &params.to_city) {
             // Airport-based search
             (Some(from_airport), Some(to_airport), None, None) => {
-                info!(from_airport = from_airport, to_airport = to_airport, "Using airport-based search");
                 match build_flight_search_request(from_airport.clone(), to_airport.clone(), params.clone()) {
-                    Ok(request) => {
-                        debug!("Built flight search request successfully");
-                        get_flights_internal(request).await
-                    },
-                    Err(e) => {
-                        error!("Error building flight request: {}", e);
-                        return format!(r#"{{"error": "Error building flight request: {}"}}"#, e);
-                    }
+                    Ok(request) => get_flights_internal(request).await,
+                    Err(e) => return format!(r#"{{"error": "Error building flight request: {}"}}"#, e),
                 }
             }
             // City-based search
             (None, None, Some(from_city), Some(to_city)) => {
-                info!(from_city = from_city, to_city = to_city, "Using city-based search");
                 match build_city_flight_search_request(from_city.clone(), to_city.clone(), params.clone()) {
-                    Ok(request) => {
-                        debug!("Built city flight search request successfully");
-                        get_flights_by_city_internal(request).await
-                    },
-                    Err(e) => {
-                        error!("Error building city flight request: {}", e);
-                        return format!(r#"{{"error": "Error building city flight request: {}"}}"#, e);
-                    }
+                    Ok(request) => get_flights_by_city_internal(request).await,
+                    Err(e) => return format!(r#"{{"error": "Error building city flight request: {}"}}"#, e),
                 }
             }
             // Invalid combinations
             (Some(_), None, _, _) | (None, Some(_), _, _) => {
-                warn!("Invalid airport search parameters - missing from_airport or to_airport");
                 return r#"{"error": "For airport search, both from_airport and to_airport must be specified"}"#.to_string()
             }
             (_, _, Some(_), None) | (_, _, None, Some(_)) => {
-                warn!("Invalid city search parameters - missing from_city or to_city");
                 return r#"{"error": "For city search, both from_city and to_city must be specified"}"#.to_string()
             }
             (Some(_), Some(_), Some(_), Some(_)) => {
-                warn!("Invalid search parameters - both airport codes and city names specified");
                 return r#"{"error": "Cannot specify both airport codes and city names - choose one search mode"}"#.to_string()
             }
             (None, None, None, None) => {
-                warn!("Invalid search parameters - no location information provided");
                 return r#"{"error": "Must specify either airport codes (from_airport/to_airport) or city names (from_city/to_city) for flight search"}"#.to_string()
             }
         };
 
         match result {
-            Ok(flight_result) => {
-                info!(
-                    flights_found = flight_result.flights.len(),
-                    current_price_level = flight_result.current_price,
-                    "Flight search completed successfully"
-                );
-                format_flight_results_json(flight_result, max_flights)
-            },
-            Err(e) => {
-                error!("Flight search failed: {}", e);
-                format!(r#"{{"error": "Flight search failed: {}"}}"#, e)
-            }
+            Ok(flight_result) => format_flight_results_json(flight_result, max_flights),
+            Err(e) => format!(r#"{{"error": "Flight search failed: {}"}}"#, e),
         }
     }
 
@@ -255,29 +172,12 @@ impl FlightServer {
         &self,
         #[tool(aggr)] params: ItineraryRequest,
     ) -> String {
-        info!(
-            flights_count = params.flights.len(),
-            adults = params.adults.unwrap_or(1),
-            children = params.children.unwrap_or(0),
-            seat_class = params.seat_class.as_deref().unwrap_or("economy"),
-            trip_type = params.trip_type.as_deref().unwrap_or("one-way"),
-            "Itinerary link request received"
-        );
-
         if params.flights.is_empty() {
-            warn!("Empty flights list provided for itinerary link generation");
             return r#"{"error": "At least one flight must be specified"}"#.to_string();
         }
 
         // Convert to internal SelectedFlight format
         let selected_flights: Vec<SelectedFlight> = params.flights.into_iter().map(|f| {
-            debug!(
-                from_airport = f.from_airport, 
-                to_airport = f.to_airport,
-                airline_code = f.airline_code,
-                flight_number = f.flight_number,
-                "Processing flight for itinerary"
-            );
             SelectedFlight {
                 from_airport: f.from_airport,
                 to_airport: f.to_airport,
@@ -297,56 +197,30 @@ impl FlightServer {
 
         // Parse trip type
         let trip_type = match params.trip_type.as_deref().unwrap_or("one-way").parse::<TripType>() {
-            Ok(tt) => {
-                debug!("Successfully parsed trip type: {:?}", tt);
-                tt
-            },
-            Err(e) => {
-                error!("Invalid trip type: {}", e);
-                return format!(r#"{{"error": "Invalid trip type: {}"}}"#, e);
-            }
+            Ok(tt) => tt,
+            Err(e) => return format!(r#"{{"error": "Invalid trip type: {}"}}"#, e),
         };
 
         // Parse seat class
         let seat_class = match params.seat_class.as_deref().unwrap_or("economy").parse::<SeatClass>() {
-            Ok(sc) => {
-                debug!("Successfully parsed seat class: {:?}", sc);
-                sc
-            },
-            Err(e) => {
-                error!("Invalid seat class: {}", e);
-                return format!(r#"{{"error": "Invalid seat class: {}"}}"#, e);
-            }
+            Ok(sc) => sc,
+            Err(e) => return format!(r#"{{"error": "Invalid seat class: {}"}}"#, e),
         };
 
         // Build protobuf info
         let info = match build_itinerary_info(selected_flights, trip_type, passengers, seat_class) {
-            Ok(info) => {
-                debug!("Successfully built protobuf itinerary info");
-                info
-            },
-            Err(e) => {
-                error!("Error building itinerary: {}", e);
-                return format!(r#"{{"error": "Error building itinerary: {}"}}"#, e);
-            }
+            Ok(info) => info,
+            Err(e) => return format!(r#"{{"error": "Error building itinerary: {}"}}"#, e),
         };
 
         // Encode to base64
         let encoded = match encode_to_base64(&info) {
-            Ok(encoded) => {
-                debug!(encoded_length = encoded.len(), "Successfully encoded itinerary to base64");
-                encoded
-            },
-            Err(e) => {
-                error!("Error encoding itinerary: {}", e);
-                return format!(r#"{{"error": "Error encoding itinerary: {}"}}"#, e);
-            }
+            Ok(encoded) => encoded,
+            Err(e) => return format!(r#"{{"error": "Error encoding itinerary: {}"}}"#, e),
         };
 
         // Format as Google Flights URL
         let url = format!("https://www.google.com/travel/flights?tfs={}", encoded);
-        
-        info!(url = url, "Successfully generated itinerary link");
         
         serde_json::json!({
             "url": url,
@@ -583,29 +457,14 @@ impl ServerHandler for FlightServer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging before anything else
-    if let Err(e) = FlightServer::init_logging() {
-        eprintln!("Failed to initialize logging: {}", e);
-        // Continue without logging rather than failing
-    }
-
-    info!("Starting MCP Flight Server");
-    debug!("Debug logging test from main function");
-    
     let server = FlightServer::new();
     let transport = stdio();
-
-    info!("MCP server initialized, starting service");
-    debug!("About to start MCP service");
 
     // SDK handles initialization, tool discovery, and message routing
     let service = server.serve(transport).await?;
 
-    info!("MCP service started, waiting for requests");
-
     // Wait for shutdown
     service.waiting().await?;
 
-    info!("MCP service shutting down");
     Ok(())
 } 

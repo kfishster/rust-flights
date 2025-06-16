@@ -5,7 +5,6 @@ use crate::protobuf::{build_flight_info, encode_to_base64};
 use reqwest::Client;
 use scraper::{Html, Selector};
 use regex::Regex;
-use tracing::{info, warn, error, debug, instrument};
 
 /// Main flight client for making requests to Google Flights
 pub struct FlightClient {
@@ -15,76 +14,33 @@ pub struct FlightClient {
 impl FlightClient {
     /// Create a new flight client
     pub async fn new() -> Result<Self, FlightError> {
-        debug!("Creating new flight client");
         let http_client = Client::builder()
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build()?;
         
-        debug!("Flight client created successfully");
         Ok(Self { http_client })
     }
 
     /// Main API function with consolidated parameters
-    #[instrument(level = "info", skip(self, request))]
     pub async fn get_flights(&self, request: FlightSearchRequest) -> Result<FlightResult, FlightError> {
-        info!("Building Google Flights request");
-        
         // Build protobuf message
         let info = build_flight_info(request.flights, request.trip_type, request.passengers, request.seat_class)?;
-        debug!("Protobuf message built successfully");
         
         // Encode to base64
         let encoded = encode_to_base64(&info)?;
-        debug!(encoded_length = encoded.len(), "Encoded protobuf to base64");
+        
+        println!("Encoded: {}", encoded);
 
         // Build URL
         let url = format!("https://www.google.com/travel/flights?tfs={}", encoded);
-        info!(url = %url, "Making HTTP request to Google Flights");
         
         // Make HTTP request
-        let start_time = std::time::Instant::now();
         let response = self.http_client.get(&url).send().await?;
-        let status = response.status();
-        let request_duration = start_time.elapsed();
-        
-        info!(
-            status = %status,
-            duration_ms = request_duration.as_millis(),
-            "HTTP request completed"
-        );
-        
-        if !status.is_success() {
-            error!(status = %status, "HTTP request failed");
-            return Err(FlightError::HttpError(reqwest::Error::from(response.error_for_status().unwrap_err())));
-        }
-        
         let html = response.text().await?;
-        info!(html_length = html.len(), "Received HTML response");
         
         // Parse response
         let parser = FlightResponseParser::new()?;
-        let start_parse = std::time::Instant::now();
-        let result = parser.parse_response(&html);
-        let parse_duration = start_parse.elapsed();
-        
-        match &result {
-            Ok(flight_result) => {
-                info!(
-                    parse_duration_ms = parse_duration.as_millis(),
-                    flights_found = flight_result.flights.len(),
-                    "HTML parsing completed successfully"
-                );
-            },
-            Err(e) => {
-                error!(
-                    parse_duration_ms = parse_duration.as_millis(),
-                    error = %e,
-                    "HTML parsing failed"
-                );
-            }
-        }
-        
-        result
+        parser.parse_response(&html)
     }
 }
 
@@ -104,7 +60,6 @@ pub struct FlightResponseParser {
 
 impl FlightResponseParser {
     pub fn new() -> Result<Self, FlightError> {
-        debug!("Initializing HTML parser with selectors");
         Ok(Self {
             flights_selector: Selector::parse(r#"div[jsname="IWWDBc"], div[jsname="YdtKid"]"#)
                 .map_err(|e| FlightError::ParseError(format!("Invalid flights selector: {}", e)))?,
@@ -128,17 +83,9 @@ impl FlightResponseParser {
     }
 
     pub fn parse_response(&self, html: &str) -> Result<FlightResult, FlightError> {
-        debug!("Starting HTML parsing");
         let document = Html::parse_document(html);
-        
         let flights = self.extract_flights(&document)?;
         let current_price = self.extract_current_price(&document);
-        
-        debug!(
-            flights_extracted = flights.len(),
-            current_price = current_price,
-            "HTML parsing completed"
-        );
         
         Ok(FlightResult {
             current_price,
