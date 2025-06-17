@@ -57,6 +57,9 @@ pub struct FlightResponseParser {
     current_price_selector: Selector,     // span.gOatQ
     flight_info_selector: Selector,       // .NZRfve (for flight number extraction)
     airport_codes_selector: Selector,     // span.PTuQse span[jscontroller="cNtv4b"] (for origin/destination airports)
+    flight_summary_selector: Selector,     // JMc5Xc
+    layover_selector: Selector,           // div.sSHqwe.tPgKwe.ogfYpf (for layover description and airports)
+    layover_airport_selector: Selector,   // span[jscontroller="cNtv4b"] (for layover airport codes)
 }
 
 impl FlightResponseParser {
@@ -82,6 +85,12 @@ impl FlightResponseParser {
                 .map_err(|e| FlightError::ParseError(format!("Invalid flight info selector: {}", e)))?,
             airport_codes_selector: Selector::parse("span.PTuQse span[jscontroller=\"cNtv4b\"]")
                 .map_err(|e| FlightError::ParseError(format!("Invalid airport codes selector: {}", e)))?,
+            flight_summary_selector: Selector::parse(".JMc5Xc")
+                .map_err(|e| FlightError::ParseError(format!("Invalid flight summary selector: {}", e)))?,
+            layover_selector: Selector::parse("div.sSHqwe.tPgKwe.ogfYpf")
+                .map_err(|e| FlightError::ParseError(format!("Invalid layover selector: {}", e)))?,
+            layover_airport_selector: Selector::parse("span[jscontroller=\"cNtv4b\"]")
+                .map_err(|e| FlightError::ParseError(format!("Invalid layover airport selector: {}", e)))?,
         })
     }
 
@@ -174,12 +183,20 @@ impl FlightResponseParser {
                 
                 let price = self.parse_price(&price_text);
                 
-                // Extract flight number from NZRfve class
-                let (airline_code, flight_number) = self.extract_flight_info(&item);
+                // Extract flight legs from NZRfve class
+                let flight_legs = self.extract_flight_info(&item);
                 
                 // Extract origin and destination airport codes
                 let (origin_airport, destination_airport) = self.extract_airport_codes(&item);
-                
+
+                // Extract flight summary
+                let flight_summary = item.select(&self.flight_summary_selector)
+                    .next()
+                    .map(|el| el.value().attr("aria-label").unwrap_or("").to_string());
+
+                // Extract layover information
+                let (layovers, layover_description) = self.extract_layover_info(&item);
+
                 flights.push(Flight {
                     is_best: is_best_flight,
                     name,
@@ -188,10 +205,12 @@ impl FlightResponseParser {
                     duration,
                     stops,
                     price,
-                    airline_code,
-                    flight_number,
+                    flight_legs,
                     origin_airport,
                     destination_airport,
+                    flight_summary,
+                    layovers,
+                    layover_description,
                 });
             }
         }
@@ -245,7 +264,7 @@ impl FlightResponseParser {
         }
     }
     
-    fn extract_flight_info(&self, item: &scraper::ElementRef) -> (Option<String>, Option<String>) {
+    fn extract_flight_info(&self, item: &scraper::ElementRef) -> Option<Vec<crate::FlightLeg>> {
         // Look for flight info in NZRfve class with data-travelimpactmodelwebsiteurl
         if let Some(element) = item.select(&self.flight_info_selector).next() {
             if let Some(url) = element.value().attr("data-travelimpactmodelwebsiteurl") {
@@ -253,10 +272,10 @@ impl FlightResponseParser {
             }
         }
         
-        (None, None)
+        None
     }
     
-    fn parse_flight_info_from_url(&self, url: &str) -> (Option<String>, Option<String>) {
+    fn parse_flight_info_from_url(&self, url: &str) -> Option<Vec<crate::FlightLeg>> {
         // Parse URLs like:
         // https://www.travelimpactmodel.org/lookup/flight?itinerary=LAX-JFK-AA-274-20250815
         // https://www.travelimpactmodel.org/lookup/flight?itinerary=LAX-ATL-F9-4316-20250815,ATL-JFK-F9-4818-20250815
@@ -266,20 +285,27 @@ impl FlightResponseParser {
         if let Some(captures) = re.captures(url) {
             let itinerary = captures.get(1).map_or("", |m| m.as_str());
             
-            // Split by comma for multi-leg flights and take the first one
-            let first_leg = itinerary.split(',').next().unwrap_or("");
+            let mut flight_legs = Vec::new();
             
-            // Parse format: ORIGIN-DEST-AIRLINE-NUMBER-DATE
-            let parts: Vec<&str> = first_leg.split('-').collect();
+            // Split by comma for multi-leg flights and process all legs
+            for leg in itinerary.split(',') {
+                // Parse format: ORIGIN-DEST-AIRLINE-NUMBER-DATE
+                let parts: Vec<&str> = leg.split('-').collect();
+                
+                if parts.len() >= 4 {
+                    flight_legs.push(crate::FlightLeg {
+                        airline_code: parts[2].to_string(),
+                        flight_number: parts[3].to_string(),
+                    });
+                }
+            }
             
-            if parts.len() >= 4 {
-                let airline_code = parts[2].to_string();
-                let flight_number = parts[3].to_string();
-                return (Some(airline_code), Some(flight_number));
+            if !flight_legs.is_empty() {
+                return Some(flight_legs);
             }
         }
         
-        (None, None)
+        None
     }
     
     fn extract_airport_codes(&self, item: &scraper::ElementRef) -> (Option<String>, Option<String>) {
@@ -301,6 +327,40 @@ impl FlightResponseParser {
             eprintln!("⚠️  Warning: No airport codes found in flight item");
             (None, None)
         }
+    }
+    
+    fn extract_layover_info(&self, item: &scraper::ElementRef) -> (Option<Vec<String>>, Option<String>) {
+        // Look for layover information in div.sSHqwe.tPgKwe.ogfYpf elements
+        let layover_elements: Vec<_> = item.select(&self.layover_selector).collect();
+        
+        for element in layover_elements.iter() {
+            let aria_label = element.value().attr("aria-label").unwrap_or("");
+            
+            // Check if this looks like layover info (contains "Layover" or "layover")
+            if aria_label.to_lowercase().contains("layover") {
+                // Extract description from aria-label
+                let description = element.value()
+                    .attr("aria-label")
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                
+                // Extract airport codes from nested spans with jscontroller="cNtv4b"
+                let airport_codes: Vec<String> = element.select(&self.layover_airport_selector)
+                    .map(|el| el.text().collect::<String>().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                
+                let layovers = if airport_codes.is_empty() {
+                    None
+                } else {
+                    Some(airport_codes)
+                };
+                
+                return (layovers, description);
+            }
+        }
+        
+        (None, None)
     }
 }
 
@@ -413,5 +473,50 @@ mod tests {
         
         assert_eq!(origin, None);
         assert_eq!(destination, None);
+    }
+
+    #[test]
+    fn test_extract_layover_info() {
+        let parser = FlightResponseParser::new().unwrap();
+        
+        // Test HTML structure with layover information
+        let html = r#"
+            <li>
+                <div class="sSHqwe tPgKwe ogfYpf" aria-label="Layover (1 of 2) is a 2 hr 15 min layover at Paris Charles de Gaulle Airport in Paris. Layover (2 of 2) is a 4 hr 40 min overnight layover at Kempegowda International Airport Bengaluru in Bengaluru.">
+                    <span jscontroller="cNtv4b">CDG</span>, 
+                    <span jscontroller="cNtv4b">BLR</span>
+                </div>
+            </li>
+        "#;
+        
+        let document = Html::parse_fragment(html);
+        let li_selector = Selector::parse("li").unwrap();
+        let item = document.select(&li_selector).next().unwrap();
+        
+        let (layovers, description) = parser.extract_layover_info(&item);
+        
+        assert_eq!(layovers, Some(vec!["CDG".to_string(), "BLR".to_string()]));
+        assert_eq!(description, Some("Layover (1 of 2) is a 2 hr 15 min layover at Paris Charles de Gaulle Airport in Paris. Layover (2 of 2) is a 4 hr 40 min overnight layover at Kempegowda International Airport Bengaluru in Bengaluru.".to_string()));
+    }
+
+    #[test]
+    fn test_extract_layover_info_none() {
+        let parser = FlightResponseParser::new().unwrap();
+        
+        // Test HTML structure with no layover information
+        let html = r#"
+            <li>
+                <div>No layover information here</div>
+            </li>
+        "#;
+        
+        let document = Html::parse_fragment(html);
+        let li_selector = Selector::parse("li").unwrap();
+        let item = document.select(&li_selector).next().unwrap();
+        
+        let (layovers, description) = parser.extract_layover_info(&item);
+        
+        assert_eq!(layovers, None);
+        assert_eq!(description, None);
     }
 } 

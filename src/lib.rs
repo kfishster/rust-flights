@@ -152,10 +152,12 @@ pub struct Flight {
     pub duration: String,
     pub stops: i32,
     pub price: FlightPrice,
-    pub airline_code: Option<String>,
-    pub flight_number: Option<String>,
+    pub flight_legs: Option<Vec<FlightLeg>>,
     pub origin_airport: Option<String>,
     pub destination_airport: Option<String>,
+    pub flight_summary: Option<String>,
+    pub layovers: Option<Vec<String>>,
+    pub layover_description: Option<String>,
 }
 
 /// Price information with amount and currency
@@ -163,6 +165,13 @@ pub struct Flight {
 pub struct FlightPrice {
     pub amount: i32,
     pub currency: String,
+}
+
+/// Individual flight leg information (for multi-leg flights)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightLeg {
+    pub airline_code: String,
+    pub flight_number: String,
 }
 
 /// Trip type enumeration
@@ -266,7 +275,6 @@ pub struct CityFlightSearchRequest {
     pub seat_class: SeatClass,
 }
 
-/// **Phase 4: NEW CITY-BASED API**
 /// Search flights using city names instead of airport codes.
 /// This function automatically resolves city names to Freebase IDs using Wikidata.
 /// 

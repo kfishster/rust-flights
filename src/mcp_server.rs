@@ -173,10 +173,12 @@ pub struct FlightInfo {
     pub duration: String,
     pub stops: i32,
     pub price: rust_flights::FlightPrice,
-    pub airline_code: Option<String>,
-    pub flight_number: Option<String>,
+    pub flight_legs: Option<Vec<rust_flights::FlightLeg>>,
     pub origin_airport: Option<String>,
     pub destination_airport: Option<String>,
+    pub flight_summary: Option<String>,
+    pub layovers: Option<Vec<String>>,
+    pub layover_description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -475,10 +477,12 @@ fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) 
             duration: flight.duration,
             stops: flight.stops,
             price: flight.price,
-            airline_code: flight.airline_code,
-            flight_number: flight.flight_number,
+            flight_legs: flight.flight_legs,
             origin_airport: flight.origin_airport,
             destination_airport: flight.destination_airport,
+            flight_summary: flight.flight_summary,
+            layovers: flight.layovers,
+            layover_description: flight.layover_description,
         };
 
         if flight.is_best {
