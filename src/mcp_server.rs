@@ -28,42 +28,101 @@ impl FlightServer {
 #[derive(Debug, Deserialize, Clone, schemars::JsonSchema)]
 pub struct FlightSearchParams {
     // Airport search parameters
+    #[serde(default)]
     #[schemars(description = "Origin airport code (e.g., LAX, JFK) - use for airport-based search")]
-    pub from_airport: Option<String>,
+    pub from_airport: String,
+    #[serde(default)]
     #[schemars(description = "Destination airport code (e.g., JFK, LHR) - use for airport-based search")]
-    pub to_airport: Option<String>,
+    pub to_airport: String,
     // City search parameters
+    #[serde(default)]
     #[schemars(description = "Origin city name (e.g., Los Angeles, New York) - use for city-based search")]
-    pub from_city: Option<String>,
+    pub from_city: String,
+    #[serde(default)]
     #[schemars(description = "Destination city name (e.g., New York, London) - use for city-based search")]
-    pub to_city: Option<String>,
+    pub to_city: String,
     // Common search parameters
     #[schemars(description = "Departure date in YYYY-MM-DD format")]
     pub departure_date: String,
+    #[serde(default)]
     #[schemars(description = "Return date in YYYY-MM-DD format for round trips")]
-    pub return_date: Option<String>,
-    #[schemars(description = "Number of adult passengers")]
-    pub adults: Option<i32>,
-    #[schemars(description = "Number of child passengers")]
-    pub children: Option<i32>,
-    #[schemars(description = "Number of infants in seat")]
-    pub infants_in_seat: Option<i32>,
-    #[schemars(description = "Number of infants on lap")]
-    pub infants_on_lap: Option<i32>,
-    #[schemars(description = "Seat class: economy, premium-economy, business, first")]
-    pub seat_class: Option<String>,
-    #[schemars(description = "Maximum number of stops")]
-    pub max_stops: Option<i32>,
+    pub return_date: String,
+    #[serde(default = "default_adults")]
+    #[schemars(description = "Number of adult passengers (default: 1)")]
+    pub adults: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of child passengers (default: 0)")]
+    pub children: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of infants in seat (default: 0)")]
+    pub infants_in_seat: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of infants on lap (default: 0)")]
+    pub infants_on_lap: i32,
+    #[serde(default = "default_seat_class")]
+    #[schemars(description = "Seat class: economy, premium-economy, business, first (default: economy)")]
+    pub seat_class: String,
+    #[serde(default = "default_max_stops")]
+    #[schemars(description = "Maximum number of stops (default: -1 means no limit)")]
+    pub max_stops: i32,
+    #[serde(default)]
     #[schemars(description = "Preferred airlines (comma-separated, e.g., 'AA,DL,UA')")]
-    pub airlines: Option<String>,
+    pub airlines: String,
+    #[serde(default)]
     #[schemars(description = "Departure time window in HH:MM-HH:MM format")]
-    pub departure_time: Option<String>,
+    pub departure_time: String,
+    #[serde(default)]
     #[schemars(description = "Arrival time window in HH:MM-HH:MM format")]
-    pub arrival_time: Option<String>,
-    #[schemars(description = "Trip type: one-way or round-trip")]
-    pub trip_type: Option<String>,
+    pub arrival_time: String,
+    #[serde(default = "default_trip_type")]
+    #[schemars(description = "Trip type: one-way or round-trip (default: one-way)")]
+    pub trip_type: String,
+    #[serde(default = "default_max_flights")]
     #[schemars(description = "Maximum number of flights to return (default: 30)")]
-    pub max_flights: Option<usize>,
+    pub max_flights: usize,
+}
+
+impl FlightSearchParams {
+    // Helper methods to convert defaults back to None for internal logic
+    pub fn from_airport_opt(&self) -> Option<String> {
+        if self.from_airport.is_empty() { None } else { Some(self.from_airport.clone()) }
+    }
+    
+    pub fn to_airport_opt(&self) -> Option<String> {
+        if self.to_airport.is_empty() { None } else { Some(self.to_airport.clone()) }
+    }
+    
+    pub fn from_city_opt(&self) -> Option<String> {
+        if self.from_city.is_empty() { None } else { Some(self.from_city.clone()) }
+    }
+    
+    pub fn to_city_opt(&self) -> Option<String> {
+        if self.to_city.is_empty() { None } else { Some(self.to_city.clone()) }
+    }
+    
+    pub fn return_date_opt(&self) -> Option<String> {
+        if self.return_date.is_empty() { None } else { Some(self.return_date.clone()) }
+    }
+    
+    pub fn max_stops_opt(&self) -> Option<i32> {
+        if self.max_stops == -1 { None } else { Some(self.max_stops) }
+    }
+    
+    pub fn airlines_opt(&self) -> Option<String> {
+        if self.airlines.is_empty() { None } else { Some(self.airlines.clone()) }
+    }
+    
+    pub fn departure_time_opt(&self) -> Option<String> {
+        if self.departure_time.is_empty() { None } else { Some(self.departure_time.clone()) }
+    }
+    
+    pub fn arrival_time_opt(&self) -> Option<String> {
+        if self.arrival_time.is_empty() { None } else { Some(self.arrival_time.clone()) }
+    }
+    
+    pub fn max_flights_opt(&self) -> Option<usize> {
+        if self.max_flights == 30 { None } else { Some(self.max_flights) }
+    }
 }
 
 /// Selected flight information for itinerary links
@@ -86,18 +145,24 @@ pub struct SelectedFlightInfo {
 pub struct ItineraryRequest {
     #[schemars(description = "List of selected flights for the itinerary")]
     pub flights: Vec<SelectedFlightInfo>,
-    #[schemars(description = "Number of adult passengers")]
-    pub adults: Option<i32>,
-    #[schemars(description = "Number of child passengers")]
-    pub children: Option<i32>,
-    #[schemars(description = "Number of infants in seat")]
-    pub infants_in_seat: Option<i32>,
-    #[schemars(description = "Number of infants on lap")]
-    pub infants_on_lap: Option<i32>,
-    #[schemars(description = "Seat class: economy, premium-economy, business, first")]
-    pub seat_class: Option<String>,
-    #[schemars(description = "Trip type: one-way or round-trip")]
-    pub trip_type: Option<String>,
+    #[serde(default = "default_adults")]
+    #[schemars(description = "Number of adult passengers (default: 1)")]
+    pub adults: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of child passengers (default: 0)")]
+    pub children: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of infants in seat (default: 0)")]
+    pub infants_in_seat: i32,
+    #[serde(default)]
+    #[schemars(description = "Number of infants on lap (default: 0)")]
+    pub infants_on_lap: i32,
+    #[serde(default = "default_seat_class")]
+    #[schemars(description = "Seat class: economy, premium-economy, business, first (default: economy)")]
+    pub seat_class: String,
+    #[serde(default = "default_trip_type")]
+    #[schemars(description = "Trip type: one-way or round-trip (default: one-way)")]
+    pub trip_type: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -130,19 +195,19 @@ impl FlightServer {
         &self,
         #[tool(aggr)] params: FlightSearchParams,
     ) -> String {
-        let max_flights = params.max_flights;
+        let max_flights = params.max_flights_opt();
         
-        let result = match (&params.from_airport, &params.to_airport, &params.from_city, &params.to_city) {
+        let result = match (params.from_airport_opt(), params.to_airport_opt(), params.from_city_opt(), params.to_city_opt()) {
             // Airport-based search
             (Some(from_airport), Some(to_airport), None, None) => {
-                match build_flight_search_request(from_airport.clone(), to_airport.clone(), params.clone()) {
+                match build_flight_search_request(from_airport, to_airport, params.clone()) {
                     Ok(request) => get_flights_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building flight request: {}"}}"#, e),
                 }
             }
             // City-based search
             (None, None, Some(from_city), Some(to_city)) => {
-                match build_city_flight_search_request(from_city.clone(), to_city.clone(), params.clone()) {
+                match build_city_flight_search_request(from_city, to_city, params.clone()) {
                     Ok(request) => get_flights_by_city_internal(request).await,
                     Err(e) => return format!(r#"{{"error": "Error building city flight request: {}"}}"#, e),
                 }
@@ -191,20 +256,20 @@ impl FlightServer {
 
         // Build passenger configuration
         let passengers = Passengers {
-            adults: params.adults.unwrap_or(1),
-            children: params.children.unwrap_or(0),
-            infants_in_seat: params.infants_in_seat.unwrap_or(0),
-            infants_on_lap: params.infants_on_lap.unwrap_or(0),
+            adults: params.adults,
+            children: params.children,
+            infants_in_seat: params.infants_in_seat,
+            infants_on_lap: params.infants_on_lap,
         };
 
         // Parse trip type
-        let trip_type = match params.trip_type.as_deref().unwrap_or("one-way").parse::<TripType>() {
+        let trip_type = match params.trip_type.parse::<TripType>() {
             Ok(tt) => tt,
             Err(e) => return format!(r#"{{"error": "Invalid trip type: {}"}}"#, e),
         };
 
         // Parse seat class
-        let seat_class = match params.seat_class.as_deref().unwrap_or("economy").parse::<SeatClass>() {
+        let seat_class = match params.seat_class.parse::<SeatClass>() {
             Ok(sc) => sc,
             Err(e) => return format!(r#"{{"error": "Invalid seat class: {}"}}"#, e),
         };
@@ -238,45 +303,39 @@ fn build_flight_search_request(
     params: FlightSearchParams,
 ) -> Result<FlightSearchRequest, String> {
     let passengers = Passengers {
-        adults: params.adults.unwrap_or(1),
-        children: params.children.unwrap_or(0),
-        infants_in_seat: params.infants_in_seat.unwrap_or(0),
-        infants_on_lap: params.infants_on_lap.unwrap_or(0),
+        adults: params.adults,
+        children: params.children,
+        infants_in_seat: params.infants_in_seat,
+        infants_on_lap: params.infants_on_lap,
     };
 
     let trip_type = params
         .trip_type
-        .as_deref()
-        .unwrap_or("one-way")
         .parse::<TripType>()
         .map_err(|e| format!("Invalid trip type: {}", e))?;
 
     let seat_class = params
         .seat_class
-        .as_deref()
-        .unwrap_or("economy")
         .parse::<SeatClass>()
         .map_err(|e| format!("Invalid seat class: {}", e))?;
 
     let departure_time = params
-        .departure_time
-        .as_deref()
-        .map(TimeWindow::from_range_str)
+        .departure_time_opt()
+        .map(|dt| TimeWindow::from_range_str(&dt))
         .transpose()
         .map_err(|e| format!("Invalid departure time: {}", e))?;
 
     let arrival_time = params
-        .arrival_time
-        .as_deref()
-        .map(TimeWindow::from_range_str)
+        .arrival_time_opt()
+        .map(|at| TimeWindow::from_range_str(&at))
         .transpose()
         .map_err(|e| format!("Invalid arrival time: {}", e))?;
 
-    let max_stops = params.max_stops;
-    let return_date = params.return_date;
+    let max_stops = params.max_stops_opt();
+    let return_date = params.return_date_opt();
 
     // Parse comma-delimited airlines string
-    let parsed_airlines = params.airlines.as_ref().map(|airlines_str| {
+    let parsed_airlines = params.airlines_opt().map(|airlines_str| {
         airlines_str
             .split(',')
             .map(|s| s.trim().to_string())
@@ -320,45 +379,39 @@ fn build_city_flight_search_request(
     params: FlightSearchParams,
 ) -> Result<CityFlightSearchRequest, String> {
     let passengers = Passengers {
-        adults: params.adults.unwrap_or(1),
-        children: params.children.unwrap_or(0),
-        infants_in_seat: params.infants_in_seat.unwrap_or(0),
-        infants_on_lap: params.infants_on_lap.unwrap_or(0),
+        adults: params.adults,
+        children: params.children,
+        infants_in_seat: params.infants_in_seat,
+        infants_on_lap: params.infants_on_lap,
     };
 
     let trip_type = params
         .trip_type
-        .as_deref()
-        .unwrap_or("one-way")
         .parse::<TripType>()
         .map_err(|e| format!("Invalid trip type: {}", e))?;
 
     let seat_class = params
         .seat_class
-        .as_deref()
-        .unwrap_or("economy")
         .parse::<SeatClass>()
         .map_err(|e| format!("Invalid seat class: {}", e))?;
 
     let departure_time = params
-        .departure_time
-        .as_deref()
-        .map(TimeWindow::from_range_str)
+        .departure_time_opt()
+        .map(|dt| TimeWindow::from_range_str(&dt))
         .transpose()
         .map_err(|e| format!("Invalid departure time: {}", e))?;
 
     let arrival_time = params
-        .arrival_time
-        .as_deref()
-        .map(TimeWindow::from_range_str)
+        .arrival_time_opt()
+        .map(|at| TimeWindow::from_range_str(&at))
         .transpose()
         .map_err(|e| format!("Invalid arrival time: {}", e))?;
 
-    let max_stops = params.max_stops;
-    let return_date = params.return_date;
+    let max_stops = params.max_stops_opt();
+    let return_date = params.return_date_opt();
 
     // Parse comma-delimited airlines string
-    let parsed_airlines = params.airlines.as_ref().map(|airlines_str| {
+    let parsed_airlines = params.airlines_opt().map(|airlines_str| {
         airlines_str
             .split(',')
             .map(|s| s.trim().to_string())
@@ -447,6 +500,13 @@ fn format_flight_results_json(result: FlightResult, max_flights: Option<usize>) 
         format!(r#"{{"error": "Failed to serialize results: {}"}}"#, e)
     })
 }
+
+// Default value functions
+fn default_adults() -> i32 { 1 }
+fn default_seat_class() -> String { "economy".to_string() }
+fn default_trip_type() -> String { "one-way".to_string() }
+fn default_max_stops() -> i32 { -1 } // -1 means no limit
+fn default_max_flights() -> usize { 30 }
 
 #[tool(tool_box)]
 impl ServerHandler for FlightServer {
