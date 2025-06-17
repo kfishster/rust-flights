@@ -4,10 +4,6 @@
 
 A high-performance Rust library that reverse engineers the Google Flights API, now with **city name support** and **MCP server integration** for AI assistants! This library delivers blazing performance while maintaining full API compatibility with existing Python implementations.
 
-[![Crates.io](https://img.shields.io/crates/v/rust-flights.svg)](https://crates.io/crates/rust-flights)
-[![Documentation](https://docs.rs/rust-flights/badge.svg)](https://docs.rs/rust-flights)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 ## 🙏 Huge props for the original Python implementation
 
 This Rust implementation builds upon the groundbreaking work of [**AWeirdDev's fast-flights**](https://github.com/AWeirdDev/flights) Python library! 🐍✨ 
