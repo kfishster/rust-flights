@@ -8,6 +8,16 @@ A high-performance Rust library that reverse engineers the Google Flights API, n
 [![Documentation](https://docs.rs/rust-flights/badge.svg)](https://docs.rs/rust-flights)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## 🙏 Huge props for the original Python implementation
+
+This Rust implementation builds upon the groundbreaking work of [**AWeirdDev's fast-flights**](https://github.com/AWeirdDev/flights) Python library! 🐍✨ 
+
+AWeirdDev deserves **huge credit** for:
+- 🔍 **Reverse Engineering Google Flights**: Discovering that Google uses Base64-encoded protobuf in the `?tfs=` parameter
+- 📦 **Protobuf Protocol**: Figuring out the protobuf schema that Google Flights uses internally  
+- 🚀 **Pioneering the Approach**: Creating the first robust Google Flights scraper using this method
+- 📚 **Excellent Documentation**: Their [documentation](https://aweirddev.github.io/flights/) is fantastic!
+
 ## ⚠️ Important Disclaimer
 
 **This library works by reverse engineering and scraping Google Flights.** If Google changes their website structure or API, this library may break until updated. Use responsibly and respect Google's Terms of Service! 🙏
