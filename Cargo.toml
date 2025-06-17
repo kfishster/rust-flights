@@ -3,9 +3,9 @@ name = "rust-flights"
 version = "0.1.0"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
-description = "A high-performance Rust library for Google Flights API reverse engineering"
+description = "A high-performance Rust library for Google Flights API scraping"
 license = "MIT"
-repository = "https://github.com/yourusername/rust-flights"
+repository = "https://github.com/kfishster/rust-flights"
 keywords = ["flights", "travel", "google", "api", "scraping"]
 categories = ["web-programming", "api-bindings"]
 
